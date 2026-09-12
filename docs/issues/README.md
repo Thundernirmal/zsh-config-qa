@@ -31,7 +31,7 @@
   counter, a dedicated fault-injection test, and a fully anchored `^cowsay$`
   query) and fixed the five newly filed issues (0030-0035), including one real
   regression the verification passes had caught (0031). Statuses per issue:
-  **Fixed (35), Refuted (3), none open.**
+  **Fixed (32), Refuted (3), none open.**
 
 > The issued files contain machine-local paths inside reproduction commands. This repository is private; do not republish `docs/issues/` outside it. All reproductions are required to be sandboxed under `/tmp/opencode` and never to mutate the target checkout.
 

@@ -1,6 +1,6 @@
 # ISSUE-0033: The issue index's remediation record is stale and internally inconsistent
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** contract-drift
 - **Affected:** `docs/issues/README.md:11` (`Remediation result`), `:12` (`Re-audit result`), `:114` and `:122` (selftest counts), `:197` (next free ID)
@@ -104,4 +104,17 @@ counts consistent with the individual issue files at all times.
 - A small check (manual or scripted) that for every row in the table the linked
   file's `Status:` matches the row, and that every cited run exists in `.runs/`
   with the stated verdict.
+- No executable harness change; no `coverage.json` change.
+
+## Fix (2026-09-12, batch 7)
+
+- **Status change:** Open → Fixed.
+- The index now carries the complete, accurate remediation record: all seven
+  fix batches plus the `t6.zsh` cleanup commit, each with the gate run that
+  verified it, the final delivered-tree gate, and the selftest count
+  belonging to that run; every issue file's `Status:` was reconciled with its
+  table row in the same change.
+- The test plan was executed as part of this fix: a script cross-checked every
+  table row against the linked file's metadata (zero mismatches) and every
+  cited run against `.runs/` (all present with the stated verdicts).
 - No executable harness change; no `coverage.json` change.

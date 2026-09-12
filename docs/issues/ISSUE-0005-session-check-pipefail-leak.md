@@ -208,3 +208,10 @@ the PIPE_FAIL-in-body check.
   intended body semantics. (Also addressed the reopen's remark about a
   deliberate pipeline failure: the existing `test_pty_assertion_cannot_pass_from_echo`
   covers a failing command inside `check()`.)
+
+## Final disposition (2026-09-12, end of remediation)
+
+The delivered tree samples the baseline before any `check()`; the two-direction
+execution proof (fixed passes, reverted fails) is recorded in the Re-fix
+completion section above. The earlier "restored to Open" note referred to an
+intermediate tree state that no longer exists. Status: **Fixed**.
