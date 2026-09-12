@@ -530,15 +530,17 @@ def ctrl_t_insert() -> None:
         session.wait_for("Files", timeout=15)
         session.send("a.txt")
         time.sleep(0.5)
+        offset = len(session.output)
         session.send(b"\r")
-        session.wait_children_empty(timeout=8)
+        session.wait_no_fzf(timeout=8)
         session.wait_for_zle()
-        session.clear_output()
-        session.send(b"\x01")  # beginning of line
-        session.send("print ")
-        session.send(b"\r")
+        # The inserted path is rendered in the zle buffer; matching after the
+        # Enter offset avoids matching the picker list itself.
+        session.wait_for_since("files/a.txt", offset, timeout=10)
+        session.send(b"\x03")  # clear the inserted buffer without running it
+        session.wait_for_zle()
+        time.sleep(0.3)
         session.sync()
-        assert "files/a.txt" in session.text(), "selection not inserted"
     finally:
         session.close()
 
@@ -637,23 +639,30 @@ def fbr_picker() -> None:
 
 
 def fbr_select() -> None:
+    # Detach first so qa-feature can be force-created even if a previous run
+    # left it checked out.
+    subprocess.run(["git", "-C", str(GITREPO), "checkout", "-q", "--detach"], check=True)
+    subprocess.run(["git", "-C", str(GITREPO), "branch", "-f", "qa-feature"], check=True)
+
     session = Session(GITREPO)
     session.sync(timeout=45)
     try:
-        session.sendline("git branch -f qa-feature >/dev/null 2>&1")
-        session.sync()
         session.clear_output()
         session.sendline("fbr")
         session.wait_for("Branches", timeout=20)
         session.send("qa-feature")
         time.sleep(0.5)
         session.send(b"\r")
-        session.wait_no_fzf(timeout=10)
-        session.wait_for_zle()
-        session.clear_output()
-        session.sendline("git branch --show-current")
-        session.sync()
-        assert "qa-feature" in session.text(), "fbr did not check out the branch"
+        # Verify HEAD directly; typed follow-up commands race the widget.
+        head = GITREPO / ".git" / "HEAD"
+        deadline = time.monotonic() + 15
+        checked_out = False
+        while time.monotonic() < deadline:
+            if "qa-feature" in head.read_text():
+                checked_out = True
+                break
+            time.sleep(0.1)
+        assert checked_out, "fbr did not check out the branch"
     finally:
         session.close()
 
@@ -681,10 +690,8 @@ def fkill_signal() -> None:
         session.send(str(dummy.pid))
         time.sleep(0.5)
         session.send(b"\r")
-        session.wait_no_fzf(timeout=10)
-        session.wait_for_zle()
-        session.sync()
-        assert f"sent SIGTERM to {dummy.pid}" in session.text(), "fkill did not report SIGTERM"
+        # Wait for fkill's own confirmation line, then verify the process died.
+        session.wait_for(f"sent SIGTERM to {dummy.pid}", timeout=15)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and dummy.poll() is None:
             time.sleep(0.1)
@@ -720,12 +727,19 @@ def zi_select() -> None:
         session.sendline(f"zi {shlex.quote(str(SCRATCH))}")
         session.wait_for("Directories", timeout=20)
         session.send(b"\r")
-        session.wait_no_fzf(timeout=10)
-        session.wait_for_zle()
-        session.clear_output()
-        session.sendline("pwd")
-        session.sync()
-        assert str(SCRATCH) in session.text(), "zi did not change directory"
+        # Verify the shell's working directory directly; typed follow-up
+        # commands race the widget's foreground work.
+        deadline = time.monotonic() + 15
+        changed = False
+        while time.monotonic() < deadline:
+            try:
+                if os.readlink(f"/proc/{session.proc.pid}/cwd") == str(SCRATCH):
+                    changed = True
+                    break
+            except OSError:
+                pass
+            time.sleep(0.1)
+        assert changed, "zi did not change directory"
     finally:
         session.close()
 
