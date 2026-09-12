@@ -108,10 +108,12 @@ def register_process(pid):
             stream.write(json.dumps({'pid': pid, 'start': process_identity(pid)}) + '\n')
 
 
-def bounded(argv, *, env=None, cwd=None, timeout=120, input=None):
+def bounded(argv, *, env=None, cwd=None, timeout=120, input=None, text=True):
     """Kill the whole owned process group on timeout, including grandchildren."""
-    process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    process = subprocess.Popen(argv, env=env, cwd=cwd,
+                               stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text,
+                               start_new_session=True)
     register_process(process.pid)
     try:
         stdout, stderr = process.communicate(input, timeout=timeout)
@@ -119,7 +121,8 @@ def bounded(argv, *, env=None, cwd=None, timeout=120, input=None):
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
-        return subprocess.CompletedProcess(argv, 124, stdout, stderr + '\nQA: process timed out\n')
+        marker = '\nQA: process timed out\n' if text else b'\nQA: process timed out\n'
+        return subprocess.CompletedProcess(argv, 124, stdout, stderr + marker)
     except BaseException:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -146,6 +149,9 @@ def run_case(name, code, envs='', nonempty=False):
     repo = Path(os.environ['ZSH_CONFIG_DIR']).resolve()
     work = Path(os.environ['QA_WORK_DIR'])
     verify_work(work, repo)
+    scratch = work / 'scratch'
+    if scratch.is_symlink() or not scratch.is_dir():
+        raise ValueError('owned scratch fixture directory is missing or is a symlink')
     home = work / 'home'
     make_home(home, repo)
     env = clean_env(home, repo)
@@ -163,7 +169,7 @@ def run_case(name, code, envs='', nonempty=False):
                       f': > {shlex.quote(str(body_started))}\n'
                       'setopt PIPE_FAIL\n' + code + '\n')
     start = time.monotonic()
-    result = bounded(['zsh', '-d', '-f', str(script)], env=env, cwd=work / 'scratch',
+    result = bounded(['zsh', '-d', '-f', str(script)], env=env, cwd=scratch,
                      timeout=int(os.environ.get('QA_CASE_TIMEOUT', '180')))
     (cases / (token + '.stdout')).write_text(result.stdout)
     (cases / (token + '.stderr')).write_text(result.stderr)

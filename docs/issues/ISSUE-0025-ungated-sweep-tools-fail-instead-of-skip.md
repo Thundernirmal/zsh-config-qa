@@ -120,3 +120,16 @@ require is absent.
   future hard failure names the binaries in the report.
 - Verified: full gate `20260912-215025-6c8985a5` = `YES`, exit 0, safe 63/63
   pass; a tool-less host now yields recorded skips and an `INCOMPLETE` run.
+
+## Review and Verification (2026-09-12)
+
+- **Status:** Verified Fixed.
+- **Review assessment:** The fix completely and correctly resolves the contract drift:
+  1. **Helper correctness:** `qa_opt_nz` properly inspects `commands[$tool]` across whitespace-separated lists and invokes `qa_nz` only when all tools exist; `qa_fixture` correctly evaluates optional 4th parameter tool dependencies before checking fixture presence.
+  2. **Accurate gating & skip reasons:**
+     - `ports` correctly gates on `ss`, recording `"missing ss"` on hosts lacking `iproute2`.
+     - `extract zip` correctly gates on `unzip`, recording `"missing unzip"`.
+     - `zdoctor` gates on all 4 external prerequisites (`curl lsd ss zoxide`), recording `"missing <tool>"`.
+     - `zdoctor --network --secrets` gates on network availability and all 5 prerequisites (`curl lsd ss zoxide secret-tool`), recording `"missing <tool>"` or `"QA_SKIP_NETWORK=1"`.
+  3. **Tool metadata completeness:** `release.tool_metadata()` includes `ss`, `unzip`, `lsd`, and `curl`, ensuring `report.json` and `report.md` identify host tool presence, version, and hash or explicitly mark `available: false`.
+  4. **Verdict contract preservation:** Missing optional tools record `skip` entries in `case-results.jsonl`, keeping the `safe` stage exit code 0 and causing `release.py` to aggregate the stage as `incomplete` and the final verdict as `INCOMPLETE` (exit 2) instead of `NO` (exit 1). Full inventory in `coverage.json` is preserved with unchanged case names.

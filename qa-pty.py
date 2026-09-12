@@ -388,18 +388,39 @@ def fresh_zsh() -> Session:
 
 
 def confirm_query(session: Session, query: str, timeout: float = 10.0) -> None:
-    """Type a picker filter and wait until fzf has consumed it.
+    """Type a picker filter and wait until it is verifiably applied.
 
-    fzf echoes the query in its prompt line, so waiting for the literal query
-    (including any ^/$ anchors, which only the echo contains) proves the filter
-    was applied. The scenario sessions run fzf with --sync, so the frame only
-    appears after the whole item list was loaded; input bytes are processed in
-    order, so an Enter sent after this point selects over the full, filtered
-    list instead of racing the item stream.
+    The readiness proof is entirely output-driven (no fixed sleep as proof):
+
+    1. picker sessions run fzf with ``--sync``, so the frame only renders after
+       stdin EOF - the whole item list is loaded;
+    2. the literal echo of the anchored query (``^``/``$`` cannot appear in
+       list rows, and every caller clears output first) proves fzf consumed
+       the filter bytes;
+    3. fzf's on-screen match counter (``<matched>/<total>``) is then read from
+       the output until it reports exactly one match. With exactly one match,
+       fzf's focused row is provably that match, so an ``Enter`` sent
+       afterwards can only select it.
+
+    Raises ``AssertionError`` before any Enter is sent when the filter matches
+    zero or several rows, or when the counter never appears.
     """
+    offset = len(session.output)
     session.send(query)
     session.wait_for(query, timeout=timeout)
-    time.sleep(0.2)
+    deadline = time.monotonic() + timeout
+    counts: list[tuple[str, str]] = []
+    while time.monotonic() < deadline:
+        text = decode(strip_terminal_controls(session.output[offset:]))
+        counts = re.findall(r'\s(\d+)/(\d+)(?:\s|$)', text)
+        if counts and counts[-1][0] == '1':
+            return
+        ready, _, _ = select.select([session.master], [], [], 0.1)
+        if ready:
+            session.read_available()
+    raise AssertionError(
+        f'picker filter {query!r} never reached exactly one match '
+        f'(last counter: {counts[-1] if counts else "none"})')
 
 
 def close_picker(session: Session, clear_line: bool = False) -> None:
@@ -947,7 +968,7 @@ def npkg_add_picker() -> None:
         session.sendline("npkg add")
         # The first run builds the nixpkgs attribute cache; this can take a while.
         session.wait_for("Packages", timeout=300)
-        confirm_query(session, "cowsay$")
+        confirm_query(session, "^cowsay$")
         session.send(b"\r")
         wait_profile(lambda elements: "cowsay" in elements, timeout=300, description="cowsay install")
         (WORK / "nix-add-after.json").write_text(json.dumps(profile_elements(), indent=2))
@@ -1016,8 +1037,9 @@ def main() -> int:
     if not REPO.joinpath("init.zsh").is_file():
         print(f"fatal: no init.zsh under {REPO}; set ZSH_CONFIG_DIR", file=sys.stderr)
         return 2
-    if not SCRATCH.is_dir():
-        print(f"fatal: fixtures missing under {SCRATCH}; run ./setup-fixtures.zsh first", file=sys.stderr)
+    if SCRATCH.is_symlink() or not SCRATCH.is_dir():
+        print(f"fatal: fixtures missing under {SCRATCH} (or scratch is a symlink); "
+              "run ./setup-fixtures.zsh first", file=sys.stderr)
         return 2
     if shutil.which("fzf") is None:
         print("fatal: fzf is required on PATH", file=sys.stderr)

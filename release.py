@@ -41,8 +41,13 @@ def require_git_checkout(repo):
 
 def snapshot(repo):
     def git(*args):
-        p = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, check=True,
-                           env=git_env())
+        try:
+            p = bounded(['git', '-C', str(repo), *args], env=git_env(), timeout=60, text=False)
+        except OSError as error:
+            raise RuntimeError(f'git {" ".join(args)} failed: {error}') from error
+        if p.returncode != 0:
+            raise RuntimeError(f'git {" ".join(args)} failed: '
+                               f'{p.stderr.strip() or f"exit {p.returncode}"}')
         return p.stdout
     names = git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
     digest = hashlib.sha256()
@@ -109,10 +114,21 @@ def validate_coverage(coverage, selected):
             continue
         if any(not isinstance(name, str) or not name for name in names):
             problems.append(f'{stage}: inventory contains empty or non-string names')
+            continue
         if len(set(names)) != len(names):
             problems.append(f'{stage}: duplicate required case names')
     if problems:
         raise ValueError('; '.join(problems))
+    return coverage
+
+
+def load_validated_coverage(path: Path, selected) -> dict:
+    """Parse and validate coverage.json before any run state exists."""
+    try:
+        coverage = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError(f'coverage inventory invalid: {error}') from error
+    validate_coverage(coverage, selected)
     return coverage
 
 
@@ -214,13 +230,16 @@ def cleanup(work):
             try:
                 entry = json.loads(line)
                 if not isinstance(entry, dict) or not isinstance(entry.get('pid'), int) \
-                        or isinstance(entry.get('pid'), bool) or not isinstance(entry.get('start'), str):
+                        or isinstance(entry.get('pid'), bool) \
+                        or 'start' not in entry \
+                        or (entry['start'] is not None and not isinstance(entry['start'], str)):
                     raise ValueError(f'invalid registry entry: {line!r}')
-                pid, start = entry['pid'], entry['start']
+                pid, start = entry['pid'], entry.get('start')
                 if start and process_identity(pid) == start:
                     os.killpg(pid, signal.SIGKILL)
-                elif start:
-                    # The leader is gone (crash recovery); the group may still
+                else:
+                    # The leader is gone or was never captured (registered
+                    # after it exited, e.g. a zombie): the group may still
                     # hold live members. Their identity cannot be proven from
                     # the recorded leader alone, so never signal blindly
                     # (PID-reuse protection): report the run's cleanup as
@@ -352,6 +371,9 @@ def main():
     except BlockingIOError:
         parser.error('another local QA gate is running')
     enable_subreaper()
+    # A leftover QA_WORK_DIR would make bounded() register probes into a
+    # foreign run's ledger before this gate allocates its own.
+    os.environ.pop('QA_WORK_DIR', None)
     if args.cleanup:
         work = args.cleanup.absolute()
         try:
@@ -376,16 +398,11 @@ def main():
     if set(selected) & {'safe','env','pty'} and 'fixtures' not in selected:
         selected = ['fixtures', *selected]
     selected = [s for s in ALL_STAGES if s in selected]
-    # Validate the inventory before any run state (dir/marker) can be created.
+    coverage = load_validated_coverage(PROJECT/'coverage.json', selected)
     try:
-        coverage = json.loads((PROJECT/'coverage.json').read_text())
-        validate_coverage(coverage, selected)
-    except (OSError, ValueError) as error:
-        parser.error(f'coverage inventory invalid: {error}')
-    # A leftover QA_WORK_DIR would make bounded() register probes into a
-    # foreign run's ledger before this gate allocates its own.
-    os.environ.pop('QA_WORK_DIR', None)
-    before = snapshot(repo)
+        before = snapshot(repo)
+    except (OSError, RuntimeError) as error:
+        parser.error(f'cannot fingerprint target {repo}: {error}')
     # One local gate at a time, even when separate results roots are requested.
     root = args.results_dir.resolve()
     if root == repo or root in repo.parents or repo in root.parents:
@@ -400,26 +417,12 @@ def main():
     work = root / (time.strftime('%Y%m%d-%H%M%S')+'-'+ident[:8])
     work.mkdir(mode=0o700)
     atomic_json(work/MARKER, dict(id=ident, work=str(work), repo=str(repo)))
-    verify_work(work, repo)
     os.environ['QA_WORK_DIR'] = str(work)
-    home = work/'home'; make_home(home, repo)
-    env = clean_env(home, repo)
-    env.update(QA_WORK_DIR=str(work), QA_RUN_ID=ident)
-    env.pop('QA_LIBRARY_ONLY', None)
-    if args.offline:
-        env['QA_SKIP_NETWORK'] = '1'
-    else:
-        env.pop('QA_SKIP_NETWORK', None)
-    # Inventory already validated before run state existed; keep the parse here
-    # only for the shared coverage object.
-    coverage = json.loads((PROJECT/'coverage.json').read_text())
     stages = []
     interrupted = False
     report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,
-                  harness=harness_identity(), machine=platform.platform(), tools=tool_metadata(env),
+                  harness=None, machine=platform.platform(), tools={},
                   repeat=args.repeat, stages=stages, cleanup_errors=[])
-    atomic_json(work/'report.json', report)
-    install_interrupt_handlers()
     commands = {
         'selftest': [sys.executable, str(PROJECT/'selftest.py')],
         'regression': ['zsh', str(repo/'scripts/run-tests.zsh')],
@@ -431,6 +434,23 @@ def main():
     }
     print(f'Target: {repo} @ {before["commit"]}\nEvidence: {work}', flush=True)
     try:
+        install_interrupt_handlers()
+        verify_work(work, repo)
+        try:
+            report['harness'] = harness_identity()
+        except Exception as error:
+            report['harness'] = {'error': f'before: {type(error).__name__}: {error}'}
+        home = work/'home'; make_home(home, repo)
+        env = clean_env(home, repo)
+        env.update(QA_WORK_DIR=str(work), QA_RUN_ID=ident)
+        env.pop('QA_LIBRARY_ONLY', None)
+        if args.offline:
+            env['QA_SKIP_NETWORK'] = '1'
+        else:
+            env.pop('QA_SKIP_NETWORK', None)
+        report['tools'] = tool_metadata(env)
+        atomic_json(work/'report.json', report)
+        install_interrupt_handlers()
         for name in selected:
             count = args.repeat if name == 'pty' else 1
             for iteration in range(count):
@@ -463,7 +483,10 @@ def main():
             report['snapshot_error'] = str(error)
         full = selected == ALL_STAGES and args.repeat >= 2 and not args.offline and not interrupted and len(stages) == len(ALL_STAGES)-1+args.repeat
         verdict, rc = decide(stages, full, unchanged, not before['dirty'], not errors)
-        report['harness_after'] = harness_identity()
+        try:
+            report['harness_after'] = harness_identity()
+        except Exception as error:
+            report['harness_after'] = {'error': f'after: {type(error).__name__}: {error}'}
         if report['harness_after'] != report['harness']:
             verdict, rc = 'NO', 1
             report['harness_changed'] = True

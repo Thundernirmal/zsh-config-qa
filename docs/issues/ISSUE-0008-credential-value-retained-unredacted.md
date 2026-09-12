@@ -113,3 +113,13 @@ The script appends an inert string to `session.redactions` and to the output buf
   hash-based comparison and the absence of the old literal-comparison form).
 - Verified: review approved; full gate `20260912-215458-9601a735` = `YES`,
   exit 0 with both cgm scenarios passing in both PTY repetitions.
+
+## Review Verification (2026-09-12)
+
+- **Status:** Fixed (confirmed).
+- **Review checklist:**
+  1. **Complete and correct fix:** Verified. In `qa-pty.py:849-853`, `cgm_roundtrip()` computes `secret_hash = hashlib.sha256(secret.encode()).hexdigest()` and verifies the loaded credential via `$(print -rn -- $' + name + ' | sha256sum | cut -d" " -f1) == ' + secret_hash`. Plaintext synthetic credential values are never interpolated into `Session.check()` bodies.
+  2. **Retention verification:** Verified across live runs (`20260912-215458-9601a735` and `20260912-220611-4c20bb3b`). Generated `pty-command-*.zsh` scripts contain only SHA-256 digests; recursive search for `qa-[0-9a-f]{32}` across retained run directories produced zero matches.
+  3. **Diagnostic redaction:** Verified. `Session.redact()` redacts all synthetic secrets registered in `session.redactions` (`<redacted synthetic credential>`). Redaction is applied across all timeout and process-exit diagnostic tails in `Session.wait_for()` (lines 165, 174) and `Session.wait_for_since()` (lines 188, 197), and in `Session.text()` (line 311). Exception messages caught in `run()` and recorded to `pty-*.jsonl` are redacted at the source.
+  4. **Edge cases & lifecycle:** Slicing tails (`[-3000:]` and `[-1500:]`) occurs after `self.redact()` processes the decoded string, preventing tail-boundary leaks. Echo-off verification (`termios.ECHO`) prevents terminal echo. `credentials.jsonl` registers only unique credential names (`QA_<RUN_ID>_<SUFFIX>`), never values, conforming to AGENTS.md. Scoped backend cleanup (`secret-tool clear`) is verified via independent `secret-tool lookup` returning exit code 1.
+  5. **Self-test soundness:** Both `test_session_diagnostics_redact_registered_values` (real PTY session fault injection of deliberate secret print and timeout redaction; fails on revert) and `test_cgm_value_check_uses_a_hash_not_the_plaintext` (guards against reversion to plaintext comparison) pass and are registered in `coverage.json`.

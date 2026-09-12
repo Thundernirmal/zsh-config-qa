@@ -153,10 +153,9 @@ class GateTests(unittest.TestCase):
             session=pty.Session(self.work/'scratch')
             self.addCleanup(session.close)
             session.sync()
-            # The check body itself still runs under PIPE_FAIL by design.
-            session.check('[[ -o pipefail ]]')
-            # Baseline is captured at the shell's top level before any check
-            # could have leaked an option; the value itself is not asserted.
+            # Baseline is captured at the shell's top level BEFORE any check()
+            # runs: on a revert, the first check itself would leak the option
+            # and poison any later baseline. The value itself is not asserted.
             def run_probe():
                 probe.unlink(missing_ok=True)
                 session.sendline('__qa_pipe_probe')
@@ -168,6 +167,8 @@ class GateTests(unittest.TestCase):
                         session.read_available()
                 return probe.read_text()
             before = run_probe()
+            # The check body itself still runs under PIPE_FAIL by design.
+            session.check('[[ -o pipefail ]]')
             session.check('true')
             self.assertEqual(before, run_probe(),
                              'Session.check() changed the shell top-level options')
@@ -188,7 +189,6 @@ class GateTests(unittest.TestCase):
             self.assertIn('<redacted synthetic credential>', message)
 
     def test_cgm_value_check_uses_a_hash_not_the_plaintext(self):
-        import hashlib
         source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
         self.assertIn('sha256sum', source)
         self.assertNotRegex(source, r'== \{shlex\.quote\(secret\)\}')
@@ -205,6 +205,56 @@ class GateTests(unittest.TestCase):
         body = source[start:source.index('def fkill_picker')]
         self.assertIn('bounded(argv', body)
         self.assertNotIn('subprocess.run(["git"', body)
+
+    def test_confirm_query_fails_closed_before_enter(self):
+        # Real fzf in a PTY: an anchored query matching zero rows must raise
+        # while the picker is still open (no Enter was ever sent).
+        pty=load_pty();home=self.work/'home'
+        common.make_home(home,self.repo,'PROMPT="QA> "\nbindkey -e\n')
+        with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
+            session=pty.Session(self.work/'scratch')
+            self.addCleanup(session.close)
+            session.sync()
+            session.sendline("printf 'alpha\\nbeta\\n' | fzf")
+            session.wait_for('alpha', timeout=15)
+            with self.assertRaises(AssertionError) as caught:
+                pty.confirm_query(session, '^zzz$', timeout=2)
+            self.assertIn('never reached exactly one match', str(caught.exception))
+            children = session._children()
+            self.assertTrue(children, 'picker must still be running: no Enter was sent')
+            session.send(b'\x1b')
+
+    def test_qa_pty_rejects_symlinked_scratch(self):
+        source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
+        self.assertIn('SCRATCH.is_symlink()', source)
+
+    def test_run_case_rejects_unsafe_scratch(self):
+        scratch = self.work/'scratch'
+        scratch.rmdir()
+        scratch.symlink_to(self.root/'victim')
+        (self.root/'victim').mkdir()
+        with self.assertRaises(ValueError):
+            common.run_case('unsafe-scratch', 'true')
+
+    def test_snapshot_git_calls_are_bounded(self):
+        import inspect
+        source = inspect.getsource(release.snapshot)
+        self.assertIn('bounded([\'git\'', source)
+        self.assertIn('timeout=60', source)
+
+    def test_coverage_is_parsed_and_validated_once_before_run_state(self):
+        import inspect
+        source = inspect.getsource(release.load_validated_coverage)
+        self.assertIn('validate_coverage', source)
+        main_source = inspect.getsource(release.main)
+        self.assertIn('load_validated_coverage(PROJECT/', main_source)
+        self.assertNotIn('json.loads((PROJECT', main_source.replace(
+            'load_validated_coverage(PROJECT/', 'READ_ELSEWHERE(PROJECT/'))
+        with self.assertRaises(ValueError):
+            release.load_validated_coverage(self.root/'missing.json', ['safe'])
+        (self.root/'bad.json').write_text('not json')
+        with self.assertRaises(ValueError):
+            release.load_validated_coverage(self.root/'bad.json', ['safe'])
 
     def test_scenario_session_is_closed_when_startup_fails(self):
         pty=load_pty()
@@ -233,7 +283,6 @@ class GateTests(unittest.TestCase):
         self.assertNotEqual(before['sha256'],after['sha256'])
 
     def test_generated_credentials_are_valid_and_unique(self):
-        import re
         a=common.credential_name('a1b2c3');b=common.credential_name('a1b2c3')
         self.assertRegex(a,r'^[A-Z_][A-Z0-9_]*$')
         self.assertTrue(a.startswith('QA_A1B2C3_'))
@@ -259,6 +308,12 @@ class GateTests(unittest.TestCase):
     def test_cleanup_tolerates_malformed_registry_entries(self):
         (self.work/'processes.jsonl').write_text('[]\n{"pid": 1}\n"junk"\n42\n')
         self.assertEqual(len(release.cleanup(self.work)), 4)
+
+    def test_cleanup_accepts_uncaptured_start_identity(self):
+        # A leader registered after it exited records `start: null`; that is a
+        # known state, not a malformed entry, and must not produce a false NO.
+        (self.work/'processes.jsonl').write_text('{"pid": 12345, "start": null}\n')
+        self.assertEqual(release.cleanup(self.work), [])
 
     def test_cleanup_reports_unverified_leaderless_group(self):
         leader = subprocess.Popen(['sh','-c','sleep 300 >/dev/null 2>&1 & echo $! > survivor.pid; exit 0'],

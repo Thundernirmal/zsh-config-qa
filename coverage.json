@@ -162,7 +162,13 @@
     "test_gate.GateTests.test_session_diagnostics_redact_registered_values",
     "test_gate.GateTests.test_cgm_value_check_uses_a_hash_not_the_plaintext",
     "test_gate.GateTests.test_stage_commands_run_in_the_owned_run_directory",
-    "test_gate.GateTests.test_fbr_fixture_git_setup_is_bounded"
+    "test_gate.GateTests.test_fbr_fixture_git_setup_is_bounded",
+    "test_gate.GateTests.test_confirm_query_fails_closed_before_enter",
+    "test_gate.GateTests.test_qa_pty_rejects_symlinked_scratch",
+    "test_gate.GateTests.test_run_case_rejects_unsafe_scratch",
+    "test_gate.GateTests.test_snapshot_git_calls_are_bounded",
+    "test_gate.GateTests.test_coverage_is_parsed_and_validated_once_before_run_state",
+    "test_gate.GateTests.test_cleanup_accepts_uncaptured_start_identity"
   ],
   "fzf": [
     "narrow-unicode",

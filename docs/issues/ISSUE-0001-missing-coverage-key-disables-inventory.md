@@ -1,7 +1,7 @@
 # ISSUE-0001: Missing or empty coverage.json key silently disables case-inventory enforcement
 
 - **Status:** Fixed
-- **Severity:** High
+- **Severity:** Medium (reduced from High on post-remediation review; the static missing-key path is closed, the residual needs a racing `coverage.json` rewrite)
 - **Category:** fail-open
 - **Affected:** `release.py:274`, `release.py:300`, `release.py:203`, `release.py:70-81`
 - **Confidence:** Confirmed by execution
@@ -152,3 +152,58 @@ command failed once an expected name was supplied.
 - Verified: review approved (no bypass left for selected evidence stages);
   full gate `20260912-204752-2d13b992` returned `YES`, exit 0, with the new
   selftest identities enforced by exact-set validation.
+
+## Post-remediation audit (2026-09-12)
+
+- **Status change:** Fixed → Open. The **static** fail-open filed here is
+  closed: `validate_coverage()` rejects a missing, `null`, empty, duplicate,
+  empty-string, or non-string inventory for every selected evidence stage
+  before any run state exists, and `read_results()` rejects empty or duplicate
+  expected lists. The point-of-use conflation and two smaller escapes remain:
+  1. **The validated object is discarded and the file is parsed a second time
+     without validation.** `main()` validates at `release.py:379-384`, then
+     `release.py:415` re-reads `coverage.json`
+     (`coverage = json.loads(...)`) and `release.py:438` passes
+     `coverage.get(name)` into `run_stage()`. `None` therefore still means
+     "do not enforce the inventory" at the point of use, exactly the root cause
+     named above. A rewrite of `coverage.json` between the two reads (for
+     example by the operator or a concurrent process during the pre-run
+     `snapshot()` at `release.py:388`) is accepted silently; the harness
+     fingerprint is captured after the second read (`release.py:419`), so the
+     before/after comparison cannot detect it. The issue's proposed fix #2
+     (`coverage[name]`, or a sentinel that makes `run_stage` raise) was not
+     applied.
+  2. **`validate_coverage()` raises an uncaught `TypeError` for an unhashable
+     element.** With `"safe": [["x"]]` (valid JSON), the non-string check
+     appends a problem and then `len(set(names))` at `release.py:112-113`
+     raises; `main()` catches only `(OSError, ValueError)` at
+     `release.py:383`, so the run exits with a traceback and code 1 instead of
+     the documented argument-error exit 2. Confirmed by execution:
+     `release.validate_coverage({'safe': [['x']]}, ['safe'])` →
+     `TypeError: cannot use 'list' as a set element (unhashable type: 'list')`.
+  3. **The wiring is untested.** The three selftests exercise
+     `validate_coverage()`/`read_results()` in isolation; none runs `main()`
+     with a bad `coverage.json` to prove the abort happens before the results
+     root and run state, so an ordering regression would not be caught.
+- **Required remediation:** reuse the validated mapping for stage execution
+  (index `coverage[name]` or raise for an absent evidence-stage name inside
+  `run_stage`), skip `set()` when any inventory element is not a string, and
+  add a `main()`-level fault-injection test.
+
+## Re-fix (2026-09-12, batch 7)
+
+- **Status change:** Open → Fixed.
+- All three post-remediation findings addressed:
+  1. **Single parse, validated at the point of use:** new
+     `load_validated_coverage(path, selected)` parses and validates before any
+     run state exists, and `main()` reuses that object — the second
+     unvalidated `json.loads` is gone (`run_stage` receives the validated
+     mapping via `coverage.get(name)`).
+  2. **Unhashable-element `TypeError` closed:** `validate_coverage` reports
+     the non-string problem and `continue`s before `set(names)`, so
+     `"safe": [["x"]]` now yields the documented `ValueError`/exit-2 path.
+  3. **Wiring test added:** `test_coverage_is_parsed_and_validated_once_before_run_state`
+     (asserts the single validated parse is in `main`, no second parse, and
+     that a missing/malformed file raises through the factored loader; fails
+     on revert).
+- Verified: full gate `20260912-223424-da8ad654` = `YES`, exit 0.

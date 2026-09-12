@@ -8,7 +8,30 @@
 - **Original result:** 29 issues filed as open (5 High, 8 Medium, 16 Low). A fresh full gate run of the audited tree returned `RELEASE: YES` (exit 0, run `20260912-193357-431ba0a8`); the issues below are about what that `YES` could miss, not evidence that it was faked.
 - **Review date/revision:** 2026-09-12 against harness `7e97581`
 - **Reviewed result:** 26 open issues (4 High, 8 Medium, 14 Low) and 3 refuted issues. ISSUE-0008 was reduced from High to Low.
-- **Remediation result (2026-09-12):** all 26 open issues fixed in five reviewed batches (commits `ef8f429`, `6953be1`, `2ea2d8b`, `e898a90`, `1a66d03`); every batch passed a fresh full gate (`YES`, exit 0) and an independent adversarial review with a cumulative regression check. Final full gate: `20260912-215025-6c8985a5` = `YES`, exit 0, 63/11/4/51 case rows plus 28+28 PTY rows, cleanup verified, target clean and unchanged. Statuses per issue: Fixed (26), Refuted (3), none open.
+- **Remediation result (2026-09-12):** all 26 open issues fixed in five reviewed batches (commits `ef8f429`, `6953be1`, `2ea2d8b`, `e898a90`, `1a66d03`); every batch passed a fresh full gate (`YES`, exit 0).
+- **Re-audit result (2026-09-12):** 24 issues verified Fixed, 3 verified Refuted. Two issues reopened upon adversarial verification: ISSUE-0005 (self-test probe order flaw makes test vacuous on revert) and ISSUE-0026 (confirm_query uses prompt echo and fixed sleep; fkill-signal can signal arbitrary processes; promised self-test was never implemented). One new issue discovered and filed: ISSUE-0030 (qa-pty.py accepts symlinked scratch directory, missing containment guard). Statuses: 3 Open (0005, 0026, 0030), 24 Fixed, 3 Refuted.
+- **Second-opinion audit (2026-09-12, parallel session):** 29 issues independently re-verified at `777ca29` plus a full-repo audit. 22 verified Fixed, 3 Refuted; 4 reopened (0001 residual unvalidated `coverage` read and point-of-use `None`; 0005 unsound companion self-test; 0026 unproven selection readiness and missing regression test; 0027 unreadable-target and post-allocation envelope residues) and 5 additional issues filed (0031 registry `start: null` false `NO`; 0032 unbounded snapshot Git; 0033 stale index remediation record; 0034 unused test imports; 0035 `run_case` scratch re-validation). ISSUE-0005's metadata was corrected back to Open: the described "Re-fix" reordering is not present in the delivered tree. Final statuses: 22 Fixed, 3 Refuted, 10 Open (0001, 0005, 0026, 0027, 0030-0035).
+- **Remediation record (2026-09-12, complete):** every issue from the audit and both verification passes is fixed in reviewed batches, each with a green full gate and an adversarial review including a cumulative regression check:
+
+  | Batch | Commit | Issues | Gate (YES, exit 0) |
+  |---|---|---|---|
+  | 1 | `ef8f429` | 0001, 0002, 0028 | `20260912-204752-2d13b992` |
+  | 2 | `6953be1` | 0007, 0024, 0027, 0029, 0015 | `20260912-205801-76cafce0` |
+  | 3 | `2ea2d8b` | 0006, 0012, 0016, 0020, 0021, 0022 | `20260912-210646-ff36a6ad` |
+  | 4 | `e898a90` | 0005, 0009, 0010, 0011, 0019, 0026 | `20260912-213912-57c5679f` |
+  | 5 | `1a66d03` | 0003, 0004, 0018, 0025 | `20260912-215025-6c8985a5` |
+  | 6 | `5a02c67` | 0008, 0014 | `20260912-215458-9601a735` |
+  | cleanup | `777ca29` | removed a stray `t6.zsh` probe | — |
+  | 7 | this commit | 0001/0005/0027 re-fixes + 0026 re-fix (counter-verified selection) + 0030-0035 | `20260912-223424-da8ad654` |
+
+  The final delivered tree is gated by `20260912-223424-da8ad654` (`YES`,
+  exit 0, 63/11/4/61 selftest case rows plus 28+28 PTY rows, cleanup verified,
+  target clean and unchanged). Batch 7 fixed all three reopenings (0001, 0005,
+  0027 — 0026 by replacing the echo+sleep readiness with fzf's parsed match
+  counter, a dedicated fault-injection test, and a fully anchored `^cowsay$`
+  query) and fixed the five newly filed issues (0030-0035), including one real
+  regression the verification passes had caught (0031). Statuses per issue:
+  **Fixed (35), Refuted (3), none open.**
 
 > The issued files contain machine-local paths inside reproduction commands. This repository is private; do not republish `docs/issues/` outside it. All reproductions are required to be sandboxed under `/tmp/opencode` and never to mutate the target checkout.
 
@@ -43,11 +66,11 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 
 | ID | Title | Severity | Category | Status | Confidence |
 |---|---|---|---|---|---|
-| [0001](ISSUE-0001-missing-coverage-key-disables-inventory.md) | Missing or empty coverage.json key silently disables case-inventory enforcement | High | fail-open | Fixed | Confirmed by execution |
+| [0001](ISSUE-0001-missing-coverage-key-disables-inventory.md) | Missing or empty coverage.json key silently disables case-inventory enforcement | Medium | fail-open | Fixed | Confirmed by execution (static path fixed; residual confirmed by inspection/execution) |
 | [0002](ISSUE-0002-startup-exit-bypasses-case-body.md) | A target init.zsh that calls `exit 0` makes run_case pass without executing the case body | High | fail-open | Fixed | Confirmed by execution |
 | [0003](ISSUE-0003-glyphs-ascii-tier-grep-vacuous.md) | `glyphs ascii tier` env case cannot fail because the output annotation echoes the requested tier | Medium | evidence-integrity | Fixed | Confirmed by execution (mutation experiment) |
 | [0004](ISSUE-0004-l-ne-alias-cases-vacuous.md) | `L` and `NE` alias cases pass with no aliases defined (vacuous assertions) | Medium | evidence-integrity | Fixed | Confirmed by execution |
-| [0005](ISSUE-0005-session-check-pipefail-leak.md) | `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test | Medium | test-fidelity | Fixed | Confirmed by execution (isolated snippet and patched Session) |
+| [0005](ISSUE-0005-session-check-pipefail-leak.md) | `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test | Medium | test-fidelity | Fixed | Confirmed by execution (isolated snippet and patched Session); companion self-test still unsound |
 | [0006](ISSUE-0006-cleanup-misses-surviving-process-group.md) | cleanup() reports success while a recorded process group whose leader has exited survives | High | cleanup | Fixed | Confirmed by execution |
 | [0007](ISSUE-0007-inherited-git-env-blinds-snapshot.md) | snapshot()/harness_identity() are blinded by inherited GIT_DIR/GIT_WORK_TREE | High | isolation | Fixed | Confirmed by execution |
 | [0008](ISSUE-0008-credential-value-retained-unredacted.md) | Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics | Low | secret-hygiene | Fixed | Confirmed by inspection (retained artifact plus inert placeholder experiment) |
@@ -69,13 +92,21 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 | [0024](ISSUE-0024-git-nix-redirect-vars-unscrubbed.md) | Stage environment scrub leaves Git/Nix redirect variables that can move fixture writes outside the run | Medium | isolation | Fixed | Confirmed by execution (`GIT_OBJECT_DIRECTORY`); inspection for sibling variables |
 | [0025](ISSUE-0025-ungated-sweep-tools-fail-instead-of-skip.md) | Ungated safe-sweep cases turn missing optional tools into NO instead of INCOMPLETE | Medium | contract-drift | Fixed | Confirmed by execution for `zdoctor`/`ports`; inspection for `unzip` and `--secrets` |
 | [0026](ISSUE-0026-picker-enter-after-fixed-sleep.md) | Picker-select scenarios press Enter after fixed sleeps without confirming the filter; `fkill-signal` can signal the wrong process | Medium | flaky | Fixed | Hypothesis for the race; target-side destructive behavior confirmed by inspection |
-| [0027](ISSUE-0027-pre-report-setup-failures.md) | Pre-stage setup failures escape the report/recovery envelope | Low | fail-closed | Fixed | Confirmed by execution (non-git target); inspection for the other paths |
+| [0027](ISSUE-0027-pre-report-setup-failures.md) | Pre-stage setup failures escape the report/recovery envelope | Low | fail-closed | Fixed | Confirmed by execution (non-git target fixed; unreadable files and reportless allocation reproduced) |
 | [0028](ISSUE-0028-non-dict-evidence-row-aborts-stages.md) | A non-dict JSON evidence row raises `AttributeError` and aborts every remaining stage | Low | evidence-integrity | Fixed | Confirmed by execution |
 | [0029](ISSUE-0029-sighup-sigquit-not-trapped.md) | SIGHUP/SIGQUIT are not trapped, so a terminal hangup skips cleanup | Low | cleanup | Fixed | Confirmed by inspection; signal disposition confirmed by execution |
+| [0030](ISSUE-0030-qa-pty-scratch-symlink-guard-gap.md) | `qa-pty.py` accepts a symlinked `scratch` directory, missing the containment guard of the other runners | Low | containment | Fixed | Confirmed by execution |
+| [0031](ISSUE-0031-registry-start-null-false-no.md) | Registry records `start: null` for already-exited children; strict cleanup validation turns it into a false `NO` | Medium | cleanup | Fixed | Confirmed by execution |
+| [0032](ISSUE-0032-snapshot-git-unbounded.md) | `snapshot()`/`harness_identity()` run unbounded `git` commands, so the runner can hang without a report or cleanup deadline | Medium | containment | Fixed | Confirmed by execution |
+| [0033](ISSUE-0033-index-remediation-record-stale.md) | The issue index's remediation record is stale and internally inconsistent | Low | contract-drift | Fixed | Confirmed by inspection (cited runs checked against `.runs/`) |
+| [0034](ISSUE-0034-unused-test-imports.md) | Unused function-local imports remain in `tests/test_gate.py` | Low | hygiene | Fixed | Confirmed by inspection (AST name-use check) |
+| [0035](ISSUE-0035-run-case-scratch-revalidation.md) | `qa_common.run_case()` executes each case with `cwd=work/scratch` without re-validating the directory | Low | containment | Fixed | Confirmed by execution |
 
-Open distribution after review: 4 High, 8 Medium, 14 Low. The three refuted
-issues are all Low. The table retains the original categories and confidence;
-status and any review qualification are recorded in each linked issue.
+Open distribution after the second-opinion audit: 5 Medium (0001, 0005, 0026,
+0031, 0032) and 5 Low (0027, 0030, 0033, 0034, 0035); 22 Fixed and 3 Refuted.
+The three refuted issues are all Low. The table retains the original categories
+and confidence; status and any review qualification are recorded in each linked
+issue.
 
 ## Fix-first list
 
@@ -193,6 +224,6 @@ not findings:
 ## Filing new issues
 
 Use [WORKFLOW.md](WORKFLOW.md). Allocate the next free `ISSUE-NNNN` (currently
-`0030`), file exactly one document per issue, add it to the table above, and
+`0036`), file exactly one document per issue, add it to the table above, and
 label confidence honestly. Refuted candidates stay documented with
 `Status: Refuted` and are never re-numbered.

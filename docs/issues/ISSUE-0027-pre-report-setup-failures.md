@@ -130,3 +130,58 @@ in `report.json`.
   (plain directory and empty/no-commit repository raise; initialized checkout
   passes) and `test_tool_metadata_reports_tool_errors_instead_of_raising`.
 - Verified: full gate `20260912-205801-76cafce0` = `YES`, exit 0.
+
+## Post-remediation audit (2026-09-12)
+
+- **Status change:** Fixed → Open. The non-Git target path is closed: a bounded
+  `require_git_checkout()` runs before any run state and converts failures into
+  `parser.error` (exit 2, no traceback), verified live for a plain directory and
+  an empty `git init`; `tool_metadata()` never raises. Three residues remain, all
+  reproduced:
+  1. **Unreadable target files still trace back before any report.** The
+     Summary explicitly names "unreadable target files". `snapshot()` reads each
+     tracked file with `path.read_bytes()` (`release.py:55`) and runs before the
+     work directory/report envelope (`release.py:388`). A tracked file with mode
+     `000` produced `PermissionError`, a raw traceback, exit 1, and no run state
+     (executed against a sandbox repository). See ISSUE-0032: `snapshot()` is
+     also unbounded, so the same call can hang instead.
+  2. **Failures after the run directory exists still leave a marked, reportless
+     run.** `make_home()` (`release.py:405`), `clean_env()`, the coverage
+     re-parse (`release.py:415`), the initial report write (`release.py:421`),
+     and `harness_identity()` (`release.py:419`) all run before the `try` block
+     at `release.py:433`. A fault-injected `make_home` failure produced a
+     traceback and left `.runs/<run>/.qa-owned.json` with no `report.json` and
+     no cleanup - exactly the state the review disposition required to be
+     "captured in the initial `INCOMPLETE` report or remove/identify the
+     reportless allocation".
+  3. **The "stale `QA_WORK_DIR` is popped before any probe" claim is
+     inaccurate.** `os.environ.pop('QA_WORK_DIR')` runs at `release.py:387`,
+     after `require_git_checkout()` at `release.py:370`. With an inherited
+     `QA_WORK_DIR`, the bounded probe registers a row into that foreign run's
+     `processes.jsonl` (observed); if the stale path does not exist, the probe
+     misreports a usable checkout as "git is not available"
+     (`release.py:35-36`) and exits 2.
+- **Required remediation:** make `snapshot()` failures concise
+  (`parser.error`/recorded `snapshot_error`) and bounded per ISSUE-0032, move the
+  run-directory/report envelope so post-allocation failures always produce an
+  `INCOMPLETE` report and cleanup, and pop `QA_WORK_DIR` before
+  `require_git_checkout()`.
+
+## Re-fix (2026-09-12, batch 7)
+
+- **Status change:** Open → Fixed.
+- All three residues addressed:
+  1. **Unreadable targets:** `snapshot()` failures now surface through
+     `parser.error` (exit 2, no traceback) — and with the ISSUE-0032 fix the
+     calls are bounded, so a hang becomes a deadline failure instead.
+  2. **Reportless allocations:** every post-marker setup step
+     (`verify_work`, harness identity capture, `make_home`, `clean_env`,
+     `tool_metadata`, the initial report write, and signal-handler install)
+     now runs inside the `try`; the report dict is pre-initialized so the
+     `finally` always writes the report and runs cleanup. Harness capture
+     errors are recorded with before/after-distinguishing error strings so the
+     identity comparison fails closed on any one-sided capture failure.
+  3. **Stale `QA_WORK_DIR`:** the pop now happens immediately after the lock is
+     taken, before `require_git_checkout` and any `bounded()` call, so no probe
+     can register into a foreign run's ledger or misreport a usable checkout.
+- Verified: full gate `20260912-223424-da8ad654` = `YES`, exit 0.
