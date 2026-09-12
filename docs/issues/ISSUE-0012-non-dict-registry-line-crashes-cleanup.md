@@ -1,6 +1,6 @@
 # ISSUE-0012: A valid-JSON non-dict line in processes.jsonl raises an uncaught TypeError in cleanup()
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** cleanup
 - **Affected:** `release.py:121-131`, `release.py:126`
@@ -114,3 +114,15 @@ block independent so one bad registry line cannot skip credential cleanup.
   `cleanup()` returns a non-empty error list, does not raise, and still processes a
   subsequent valid entry and the credentials file.
 - Add the test identity to `coverage.json` under `selftest`.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- `cleanup()` validates each registry line is a JSON object with an `int` (not
+  bool) `pid` and a string `start`, raising `ValueError` per bad line; `TypeError`
+  was added to the caught tuple, and the credential block can no longer be
+  skipped by one bad registry line (each line is handled independently).
+- Fault-injection test: `test_cleanup_tolerates_malformed_registry_entries`
+  (`[]`, `{"pid": 1}`, `"junk"`, `42` each produce one reported error; cleanup
+  returns instead of raising; fails on revert via uncaught `TypeError`).
+- Verified: full gate `20260912-210646-ff36a6ad` = `YES`, exit 0.

@@ -1,6 +1,6 @@
 # ISSUE-0021: atomic_json renames without fsync, so report durability does not match the README claim
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** durability
 - **Affected:** `qa_common.py:20-23`, used for `report.json` at `release.py:280`, `release.py:302`, `release.py:334`, and `latest.json` at `release.py:344`
@@ -149,3 +149,17 @@ Keep the `.tmp` suffix so leftover temp files remain recognizable, and consider
 - Keep a concurrency test asserting no reader sees invalid JSON and no `.tmp` remains.
 - The existing atomic-write callers need no interface change; verify `report.json` and
   `latest.json` still load with `json.loads` after the change.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- `qa_common.atomic_json()` now fsyncs the temporary file, applies the optional
+  `mode` to it, renames, and fsyncs the parent directory, so the README's
+  interrupted-run guarantee holds across power loss and `latest.json` cannot
+  trail a durable completion. `release.py` writes `latest.json` with mode
+  `0600`.
+- Fault-injection test: `test_atomic_json_is_durable_and_honors_mode` (asserts
+  at least two `fsync` calls — file and directory — plus the final mode and
+  parseable content with no leftover `.tmp`; fails on revert to the old
+  write+rename).
+- Verified: full gate `20260912-210646-ff36a6ad` = `YES`, exit 0.

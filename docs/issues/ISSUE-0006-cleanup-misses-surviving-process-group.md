@@ -1,6 +1,6 @@
 # ISSUE-0006: cleanup() reports success while a recorded process group whose leader has exited survives
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** High
 - **Category:** cleanup
 - **Affected:** `release.py:113-158`, `release.py:126-129`, `qa_common.py:85-90`
@@ -155,3 +155,24 @@ naming the surviving pgid/PIDs. "Leader identity mismatched" must be treated as
 - Add a test that a recorded entry with a stale leader identity but a live pgid yields an
   error, while the existing `test_cleanup_does_not_signal_reused_pid` still passes.
 - Update `coverage.json` selftest identities in the same change.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- `release.group_members(pgid)` enumerates live same-uid, non-zombie members of
+  a recorded group without needing the leader. `cleanup()` now: (a) kills the
+  group when the recorded leader identity still matches (unchanged PID-reuse
+  protection), and (b) when the leader is gone, reports every surviving member
+  that is not this process's own descendant as
+  "recorded group <pid> has unverified surviving members [...]; cleanup
+  unverified" instead of silently reporting success. No blind signaling from a
+  bare pgid, per the review constraint.
+- The descendant-exclusion filter prevents false "unverified" reports during
+  normal runs (dying descendants are handled by the descendant pass; adopted
+  grandchildren are included there).
+- Fault-injection test: `test_cleanup_reports_unverified_leaderless_group`
+  (real detached group whose leader exits; asserts the explicit unverified
+  error AND that the survivor was not killed on unproven identity; fails on
+  revert, where cleanup returned `[]`).
+- Verified: review approved; full gate `20260912-210646-ff36a6ad` = `YES`,
+  exit 0.

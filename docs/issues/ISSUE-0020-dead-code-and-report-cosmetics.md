@@ -1,6 +1,6 @@
 # ISSUE-0020: Dead code and report cosmetics in the harness sources
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** hygiene
 - **Affected:** `qa_common.py:5`, `tests/test_gate.py:5`, `qa-pty.py:193-203`, `release.py:338`
@@ -92,3 +92,19 @@ lines.append(f'| {stage["name"]} | {stage["status"]} | '
   identity to `coverage.json` in the same change.
 - Re-run `./run-all.zsh` after the change (executable-file change) before any new
   `YES` is claimed.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- Removed the unused `hashlib` import (`qa_common.py`; hashing lives in
+  `release.py`), removed the never-called `Session.wait_quiet`
+  (`qa-pty.py`), and removed the trailing space from generated `report.md`
+  stage-link text (`release.py`). The unused `p =` assignment before
+  `secret-tool clear` in `cleanup()` was also removed as opportunistic
+  maintenance (the refuted ISSUE-0017's only actionable residue; `clear` is
+  still called and the independent lookup remains the authoritative absence
+  check).
+- The stale `import signal` in `tests/test_gate.py` is now genuinely used by
+  the Batch-2 signal test, so it stays.
+- No new test identity required (behavior-neutral); full suite verified:
+  gate `20260912-210646-ff36a6ad` = `YES`, exit 0.

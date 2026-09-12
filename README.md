@@ -31,7 +31,7 @@ Configuration/argument errors also return nonzero. No exit code other than 0 app
 
 The report records the harness fingerprint, target identity, machine, executable hashes, and tool versions. Changing the harness during a run invalidates the result too.
 
-The report lives in `.runs/<timestamp>-<id>/report.md`, with a machine-readable `report.json`. `.runs/latest.json` points to the most recently completed run. Logs and per-case stdout/stderr are retained beside the report. Evidence is local-only and gitignored; run directories are private to your user. A half-written/interrupted run starts with an `INCOMPLETE` report, never a stale success.
+The report lives in `.runs/<timestamp>-<id>/report.md`, with a machine-readable `report.json`. `.runs/latest.json` points to the most recently completed run. Logs and per-case stdout/stderr are retained beside the report. Evidence is local-only and gitignored; the results root and run directories are private to your user — a results root that already exists with group/other permission bits must be tightened to `chmod 700` once before the gate will run. A half-written/interrupted run starts with an `INCOMPLETE` report, never a stale success.
 
 ## What runs
 

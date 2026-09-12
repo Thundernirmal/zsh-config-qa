@@ -151,7 +151,12 @@
     "test_gate.GateTests.test_non_git_target_is_rejected_before_run_state",
     "test_gate.GateTests.test_tool_metadata_reports_tool_errors_instead_of_raising",
     "test_gate.GateTests.test_tool_metadata_records_first_nonempty_version_line",
-    "test_gate.GateTests.test_sighup_and_sigquit_route_to_interrupt"
+    "test_gate.GateTests.test_sighup_and_sigquit_route_to_interrupt",
+    "test_gate.GateTests.test_cleanup_tolerates_malformed_registry_entries",
+    "test_gate.GateTests.test_cleanup_reports_unverified_leaderless_group",
+    "test_gate.GateTests.test_cleanup_rejects_unusable_path_cleanly",
+    "test_gate.GateTests.test_atomic_json_is_durable_and_honors_mode",
+    "test_gate.GateTests.test_results_root_must_be_private"
   ],
   "fzf": [
     "narrow-unicode",

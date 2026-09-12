@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -174,6 +175,68 @@ class GateTests(unittest.TestCase):
         with patch.object(release,'process_identity',return_value='different'),patch.object(release.os,'killpg') as kill:
             self.assertEqual(release.cleanup(self.work),[])
             kill.assert_not_called()
+
+    def test_cleanup_tolerates_malformed_registry_entries(self):
+        (self.work/'processes.jsonl').write_text('[]\n{"pid": 1}\n"junk"\n42\n')
+        self.assertEqual(len(release.cleanup(self.work)), 4)
+
+    def test_cleanup_reports_unverified_leaderless_group(self):
+        leader = subprocess.Popen(['sh','-c','sleep 300 >/dev/null 2>&1 & echo $! > survivor.pid; exit 0'],
+                                  cwd=self.root, preexec_fn=os.setsid)
+        survivor = None
+        for _ in range(100):
+            try:
+                survivor = int((self.root/'survivor.pid').read_text())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.05)
+        self.assertIsNotNone(survivor, 'survivor did not start')
+        leader.wait()
+        pgid = os.getpgid(survivor)
+        (self.work/'processes.jsonl').write_text(json.dumps({'pid': pgid, 'start': 'unrecordable'})+'\n')
+        try:
+            errors = release.cleanup(self.work)
+            self.assertTrue(any('unverified' in e and str(pgid) in e for e in errors), errors)
+            self.assertTrue(os.path.exists(f'/proc/{survivor}'), 'survivor must not be killed on unproven identity')
+        finally:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                os.kill(survivor, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_cleanup_rejects_unusable_path_cleanly(self):
+        with self.assertRaises(OSError):
+            release.validate_cleanup_target(self.root/'missing-run')
+        (self.work/common.MARKER).write_text('not json')
+        with self.assertRaises(ValueError):
+            release.validate_cleanup_target(self.work)
+
+    def test_atomic_json_is_durable_and_honors_mode(self):
+        import qa_common as common_module
+        target = self.root/'report.json'
+        calls = []
+        real_fsync = os.fsync
+        def counting_fsync(fd):
+            calls.append(fd)
+            return real_fsync(fd)
+        with patch('os.fsync', counting_fsync):
+            common_module.atomic_json(target, {'verdict': 'INCOMPLETE'}, mode=0o600)
+        self.assertGreaterEqual(len(calls), 2, 'file and directory must be fsynced')
+        self.assertEqual(oct(target.stat().st_mode & 0o777), oct(0o600))
+        self.assertEqual(json.loads(target.read_text()), {'verdict': 'INCOMPLETE'})
+        self.assertFalse((self.root/'report.json.tmp').exists())
+
+    def test_results_root_must_be_private(self):
+        broad = self.root/'broad'; broad.mkdir(); broad.chmod(0o755)
+        with self.assertRaises(ValueError):
+            release.prepare_results_root(broad)
+        private = self.root/'private'
+        release.prepare_results_root(private)
+        self.assertEqual(oct(private.stat().st_mode & 0o777), oct(0o700))
 
     def test_zero_assertion_regression_cannot_pass(self):
         item=release.run_stage('regression',['sh','-c','true'],self.work,dict(os.environ),5)

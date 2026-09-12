@@ -1,6 +1,6 @@
 # ISSUE-0022: Results root `.runs/` is world-readable (0755) while run directories are 0700
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** isolation
 - **Affected:** `release.py:259-262`
@@ -97,3 +97,18 @@ is not a symlink and is owned by the current user.
 - Test with an existing `0755` root: assert the harness tightens it or refuses, rather than
   silently inheriting it.
 - No `coverage.json` change unless a new named selftest is added.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- New `release.prepare_results_root(root)` creates missing roots with mode
+  `0700` (umask-independent for owner bits) and **rejects** an existing root
+  with group/other bits set (`parser.error`, actionable chmod 700 message) —
+  it never chmods a caller-owned directory, per the review constraint.
+  `latest.json` is written `0600`.
+- README now documents the one-time requirement for an existing broad root.
+- Fault-injection test: `test_results_root_must_be_private` (broad existing
+  root → `ValueError` after explicit `chmod 755`, so the test is umask-proof;
+  fresh root → `0700`).
+- Verified: full gate `20260912-210646-ff36a6ad` = `YES`, exit 0 (the local
+  `.runs/` root was tightened to `0700` as part of this fix).

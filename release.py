@@ -183,10 +183,26 @@ def enable_subreaper():
         raise OSError(ctypes.get_errno(), 'cannot enable child subreaper')
 
 
+def group_members(pgid):
+    """Live same-uid processes whose process group is `pgid` (leader-agnostic)."""
+    members = []
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry/'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[2]) == pgid and entry.stat().st_uid == os.getuid() and fields[0] != 'Z':
+                members.append(int(entry.name))
+        except (OSError, IndexError, ValueError):
+            continue
+    return members
+
+
 def cleanup(work):
     errors = []
     # Never target unrelated sessions: these are actual descendants of this runner.
-    for pid in reversed(own_descendants()):
+    descendants = set(own_descendants())
+    for pid in reversed(sorted(descendants)):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -196,11 +212,26 @@ def cleanup(work):
         for line in registry.read_text().splitlines():
             try:
                 entry = json.loads(line)
-                if entry['start'] and process_identity(entry['pid']) == entry['start']:
-                    os.killpg(entry['pid'], signal.SIGKILL)
+                if not isinstance(entry, dict) or not isinstance(entry.get('pid'), int) \
+                        or isinstance(entry.get('pid'), bool) or not isinstance(entry.get('start'), str):
+                    raise ValueError(f'invalid registry entry: {line!r}')
+                pid, start = entry['pid'], entry['start']
+                if start and process_identity(pid) == start:
+                    os.killpg(pid, signal.SIGKILL)
+                elif start:
+                    # The leader is gone (crash recovery); the group may still
+                    # hold live members. Their identity cannot be proven from
+                    # the recorded leader alone, so never signal blindly
+                    # (PID-reuse protection): report the run's cleanup as
+                    # unverified instead. Members that are this process's own
+                    # descendants are handled by the descendant pass above.
+                    members = [m for m in group_members(pid) if m not in descendants]
+                    if members:
+                        errors.append(f'process cleanup: recorded group {pid} has '
+                                      f'unverified surviving members {members}; cleanup unverified')
             except ProcessLookupError:
                 pass
-            except (ValueError, KeyError, PermissionError) as error:
+            except (TypeError, ValueError, KeyError, PermissionError) as error:
                 errors.append(f'process cleanup: {error}')
     credentials = work / 'credentials.jsonl'
     if credentials.exists():
@@ -211,7 +242,7 @@ def cleanup(work):
                 if not name.startswith('QA_' + json.loads((work / MARKER).read_text())['id'].upper() + '_'):
                     raise ValueError('credential is outside this run namespace')
                 # Never log values. Only the run's synthetic credential is queried.
-                p = bounded(['secret-tool', 'clear', 'application', 'cgm', 'variable', name], timeout=20)
+                bounded(['secret-tool', 'clear', 'application', 'cgm', 'variable', name], timeout=20)
                 check = bounded(['secret-tool', 'lookup', 'application', 'cgm', 'variable', name], timeout=20)
                 if check.returncode != 1 or check.stderr.strip():
                     errors.append(f'credential cleanup could not verify absence: {name}')
@@ -288,6 +319,20 @@ def run_stage(name, argv, work, env, timeout, expected=None):
     return item
 
 
+def prepare_results_root(root: Path) -> None:
+    """Create (or validate) a private results root; never broaden an existing one."""
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if root.stat().st_mode & 0o077:
+        raise ValueError(f'results root {root} must be private to the user (chmod 700)')
+
+
+def validate_cleanup_target(work: Path) -> dict:
+    """Parse and verify an owned run marker for --cleanup; raise for unusable paths."""
+    marker = json.loads((work/MARKER).read_text())
+    verify_work(work, Path(marker['repo']))
+    return marker
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stages', nargs='*', choices=ALL_STAGES)
@@ -308,8 +353,10 @@ def main():
     enable_subreaper()
     if args.cleanup:
         work = args.cleanup.absolute()
-        marker = json.loads((work/MARKER).read_text())
-        verify_work(work, Path(marker['repo']))
+        try:
+            validate_cleanup_target(work)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.error(f'cannot clean up {work}: {error}')
         errors = cleanup(work)
         print('\n'.join(errors) if errors else 'Cleanup verified.')
         return 1 if errors else 0
@@ -342,7 +389,12 @@ def main():
     root = args.results_dir.resolve()
     if root == repo or root in repo.parents or repo in root.parents:
         parser.error('results must live outside the target repository')
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        prepare_results_root(root)
+    except OSError as error:
+        parser.error(f'cannot create results root {root}: {error}')
+    except ValueError as error:
+        parser.error(str(error))
     ident = uuid.uuid4().hex
     work = root / (time.strftime('%Y%m%d-%H%M%S')+'-'+ident[:8])
     work.mkdir(mode=0o700)
@@ -419,13 +471,13 @@ def main():
         lines = [f'# Release verdict: {verdict}', '', f'Target: `{before["commit"]}`', '',
                  '| Stage | Result | Evidence |', '|---|---|---|']
         for stage in stages:
-            lines.append(f'| {stage["name"]} | {stage["status"]} | [{stage.get("log", "details")} ]({stage.get("log", "report.json")}) |')
+            lines.append(f'| {stage["name"]} | {stage["status"]} | [{stage.get("log", "details")}]({stage.get("log", "report.json")}) |')
         lines += ['', 'YES requires a clean, unchanged target, all required cases, no skips, and verified cleanup.',
                   'Scope: local GNU/Linux and installed tools. System-wide package mutations and human font/contrast judgment are excluded.',
                   '', 'Cleanup: '+ ('; '.join(errors) if errors else 'verified'), '',
                   'See report.json for case-level evidence, target fingerprint, harness revision, and exact failures.']
         (work/'report.md').write_text('\n'.join(lines)+'\n')
-        atomic_json(root/'latest.json', {'run':str(work),'verdict':verdict})
+        atomic_json(root/'latest.json', {'run':str(work),'verdict':verdict}, mode=0o600)
         print(f'\nRELEASE: {verdict}\nReport: {work / "report.md"}', flush=True)
     return rc
 

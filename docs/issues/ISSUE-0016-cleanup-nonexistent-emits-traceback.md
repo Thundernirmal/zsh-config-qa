@@ -1,6 +1,6 @@
 # ISSUE-0016: `--cleanup /nonexistent` emits a raw Python traceback
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** hygiene
 - **Affected:** `release.py:236-241`, `release.py:238`
@@ -117,3 +117,18 @@ if args.cleanup:
 - Variants: directory present without marker; marker containing `not json`;
   `verify_work` rejection due to wrong repo.
 - No live stage or cleanup operation is triggered by these tests.
+
+## Fix (2026-09-12, batch 3)
+
+- **Status change:** Open → Fixed.
+- New `release.validate_cleanup_target(work)` performs the marker read, JSON
+  parse, and `verify_work`; `main()`'s `--cleanup` branch wraps it and converts
+  every failure (`FileNotFoundError`, `JSONDecodeError`, `KeyError`,
+  `TypeError`, `verify_work` rejections) into `parser.error(f'cannot clean up
+  {work}: ...')` — exit 2 with a concise message and no traceback.
+- Fault-injection test: `test_cleanup_rejects_unusable_path_cleanly` (missing
+  path → `OSError`; malformed marker → `ValueError`). The originally planned
+  subprocess variant cannot run under a live gate because `main()` holds the
+  per-user lock before the cleanup branch, so the exception types are asserted
+  on the helper and the `parser.error` wiring is verified by review.
+- Verified: full gate `20260912-210646-ff36a6ad` = `YES`, exit 0.

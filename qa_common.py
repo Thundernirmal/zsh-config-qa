@@ -2,7 +2,6 @@
 """Shared isolation, bounded processes, and machine-readable case evidence."""
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,10 +16,20 @@ import uuid
 MARKER = '.qa-owned.json'
 
 
-def atomic_json(path: Path, value) -> None:
+def atomic_json(path: Path, value, mode: int | None = None) -> None:
     tmp = path.with_name(path.name + '.tmp')
-    tmp.write_text(json.dumps(value, indent=2) + '\n')
+    with open(tmp, 'w') as stream:
+        stream.write(json.dumps(value, indent=2) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+    if mode is not None:
+        os.chmod(tmp, mode)
     tmp.replace(path)
+    dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def verify_work(work: Path, repo: Path) -> dict:

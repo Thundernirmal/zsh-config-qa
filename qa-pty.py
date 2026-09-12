@@ -190,18 +190,6 @@ class Session:
             f"{decode(strip_terminal_controls(self.output))[-1500:]}"
         )
 
-    def wait_quiet(self, quiet: float = 0.35, timeout: float = 20.0) -> None:
-        deadline = time.monotonic() + timeout
-        last = time.monotonic()
-        while time.monotonic() < deadline:
-            ready, _, _ = select.select([self.master], [], [], 0.1)
-            if ready:
-                if not self.read_available():
-                    return
-                last = time.monotonic()
-            elif time.monotonic() - last >= quiet:
-                return
-
     def _children(self) -> list[str]:
         found = []
         pending = [str(self.proc.pid)]
