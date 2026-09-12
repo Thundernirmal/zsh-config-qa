@@ -14,13 +14,11 @@ scenarios are confined to throwaway paths:
   * ``fkill-signal`` signals only a ``sleep`` process it started itself.
 
 Usage:
-    python3 qa-pty.py                 # run every scenario
-    python3 qa-pty.py ctrl-t npkg-add # run selected scenarios
-    python3 qa-pty.py --list          # list scenarios and requirements
+    ./run-all.zsh pty              # managed fixtures, isolation, evidence, cleanup
+    python3 qa-pty.py --list       # read-only scenario inventory
 
-Environment:
-    ZSH_CONFIG_DIR   repository under test (default: ~/.config/zsh)
-    QA_WORK_DIR      fixture/work directory (default: ./.work)
+The runner supplies ZSH_CONFIG_DIR, QA_WORK_DIR, QA_RUN_ID, and
+QA_RESULTS_FILE. Direct execution of scenarios without an owned run is rejected.
 """
 
 from __future__ import annotations
@@ -41,6 +39,9 @@ import subprocess
 import sys
 import termios
 import time
+import uuid
+
+from qa_common import (bounded, clean_env, credential_name, make_home as create_home, record, register_process, verify_work)
 from dataclasses import dataclass
 
 
@@ -85,16 +86,14 @@ class Session:
         height: int = 32,
         extra_env: dict[str, str] | None = None,
     ):
-        env = os.environ.copy()
-        env.update({
-            "TERM": "xterm-256color",
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-        })
-        if home:
-            env["HOME"] = home
+        selected_home = Path(home) if home else WORK / 'home'
+        if not selected_home.resolve().is_relative_to(WORK):
+            raise ValueError('PTY HOME must be inside the owned run')
+        if not (selected_home / '.zshrc').exists():
+            create_home(selected_home, REPO)
+        env = clean_env(selected_home, REPO)
         if zdotdir:
-            env["ZDOTDIR"] = zdotdir
+            env['ZDOTDIR'] = zdotdir
         if extra_env:
             env.update(extra_env)
         self.master, slave = pty.openpty()
@@ -107,7 +106,7 @@ class Session:
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
         self.proc = subprocess.Popen(
-            ["zsh", "-i"],
+            ["zsh", "-d", "-i"],
             stdin=slave,
             stdout=slave,
             stderr=slave,
@@ -116,9 +115,13 @@ class Session:
             close_fds=True,
             preexec_fn=child_setup,
         )
+        register_process(self.proc.pid)
         os.close(slave)
         self.output = bytearray()
         self.counter = 0
+        self.closed = False
+        self.redactions = []
+        self.last_status = None
 
     # -- low level -------------------------------------------------------
     def read_available(self) -> bool:
@@ -200,12 +203,17 @@ class Session:
                 return
 
     def _children(self) -> list[str]:
-        children_path = f"/proc/{self.proc.pid}/task/{self.proc.pid}/children"
-        try:
-            with open(children_path) as handle:
-                return handle.read().split()
-        except OSError:
-            return []
+        found = []
+        pending = [str(self.proc.pid)]
+        while pending:
+            pid = pending.pop()
+            try:
+                children = Path(f'/proc/{pid}/task/{pid}/children').read_text().split()
+            except OSError:
+                continue
+            found.extend(children)
+            pending.extend(children)
+        return found
 
     def wait_children_empty(self, timeout: float = 8.0) -> None:
         """Wait until the interactive shell has no running child (e.g. fzf)."""
@@ -270,13 +278,51 @@ class Session:
         self.wait_for_zle(timeout=timeout)
         return marker
 
+    def check(self, code: str, expected: int = 0, timeout: float = 30) -> str:
+        token = uuid.uuid4().hex
+        script = WORK / ('pty-command-' + token + '.zsh')
+        script.write_text('setopt LOCAL_OPTIONS PIPE_FAIL\n' + code + '\n')
+        offset = len(self.output)
+        self.sendline(f'source {shlex.quote(str(script))}; qa_rc=$?; print -r -- "QA-${{:-RESULT}}-{token}:$qa_rc"')
+        prefix = 'QA-RESULT-' + token + ':'
+        self.wait_for_since(prefix, offset, timeout)
+        text = decode(strip_terminal_controls(self.output[offset:]))
+        match = re.search(re.escape(prefix) + r'([0-9]+)', text)
+        assert match is not None, 'missing executed command status'
+        self.last_status = int(match.group(1))
+        assert self.last_status == expected, f'command exited {self.last_status}, expected {expected}'
+        self.wait_for_zle(timeout)
+        return text
+
+    def prepare_buffer_probe(self):
+        self.buffer_probe = WORK / ('zle-buffer-' + uuid.uuid4().hex)
+        self.check('__qa_buffer_probe() { print -rn -- "$BUFFER" > ' + shlex.quote(str(self.buffer_probe)+'.tmp') + ' && command mv -- ' + shlex.quote(str(self.buffer_probe)+'.tmp') + ' ' + shlex.quote(str(self.buffer_probe)) + '; }; '
+                   'zle -N __qa_buffer_probe; bindkey "^X^B" __qa_buffer_probe')
+
+    def capture_buffer(self):
+        self.buffer_probe.unlink(missing_ok=True)
+        self.send(b'\x18\x02')
+        deadline=time.monotonic()+10
+        while not self.buffer_probe.exists():
+            assert time.monotonic()<deadline, 'ZLE buffer probe did not execute'
+            ready, _, _ = select.select([self.master], [], [], .05)
+            if ready:
+                self.read_available()
+        return self.buffer_probe.read_text()
+
     def text(self) -> str:
-        return decode(strip_terminal_controls(self.output))
+        text = decode(strip_terminal_controls(self.output))
+        for value in self.redactions:
+            text = text.replace(value, '<redacted synthetic credential>')
+        return text
 
     def clear_output(self) -> None:
         self.output.clear()
 
     def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
         if self.proc.poll() is None:
             try:
                 os.killpg(self.proc.pid, signal.SIGKILL)
@@ -306,32 +352,42 @@ RESULTS: list[Result] = []
 
 SCENARIO_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "cgm": ("secret-tool",),
+    "cgm-no-color": ("secret-tool",),
+    "zi": ("zoxide",),
+    "zi-select": ("zoxide",),
+    "nounset-startup": ("zoxide",),
     "npkg-remove": ("nix", "jq"),
     "npkg-add": ("nix", "jq"),
 }
 
 
 def run(name: str, fn) -> None:
+    start = time.monotonic()
     print(f"scenario {name} ...", flush=True)
     missing = [tool for tool in SCENARIO_REQUIREMENTS.get(name, ()) if shutil.which(tool) is None]
     if missing:
         detail = "missing dependency: " + ", ".join(missing)
         RESULTS.append(Result(name, "skip", detail))
-        print(f"skip: {name} ({detail})", flush=True)
+        record(name, "skip", detail=detail, duration=time.monotonic()-start)
         return
     try:
         fn()
     except Exception as error:  # noqa: BLE001 - QA harness reports and continues
         RESULTS.append(Result(name, "fail", str(error)))
-        print(f"FAIL: {name}: {error}", flush=True)
+        record(name, "fail", detail=str(error), duration=time.monotonic()-start)
     else:
         RESULTS.append(Result(name, "pass"))
-        print(f"ok: {name}", flush=True)
+        record(name, "pass", duration=time.monotonic()-start)
 
 
 def fresh_zsh() -> Session:
     session = Session(SCRATCH)
-    session.sync(timeout=45)
+    try:
+        session.sync(timeout=45)
+        session.check('[[ $_ZSH_FUNCTIONS_MODULE_DIR == ' + shlex.quote(str(REPO)) + ' ]]')
+    except BaseException:
+        session.close()
+        raise
     return session
 
 
@@ -354,11 +410,11 @@ def close_picker(session: Session, clear_line: bool = False) -> None:
 def probe_shell(extra_env: dict[str, str], shell_code: str, name: str) -> str:
     """Run shell_code in an interactive session and return its file output."""
     PROBE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROBE_FILE.unlink(missing_ok=True)
     session = Session(SCRATCH, extra_env=extra_env)
     session.sync(timeout=45)
     try:
-        session.sendline(f"{{ {shell_code} }} > {shlex.quote(str(PROBE_FILE))}")
-        session.sync()
+        session.check(f"{{ {shell_code} }} > {shlex.quote(str(PROBE_FILE))}")
     finally:
         session.close()
     return PROBE_FILE.read_text()
@@ -374,6 +430,8 @@ def startup_prompt() -> None:
         text = session.text()
         assert "config: fzf" not in text, "fzf startup diagnostic appeared"
         assert "command not found" not in text, "command-not-found noise during startup"
+        assert "parameter not set" not in text, "unset parameter during startup"
+        session.check("(( $+functions[ztheme] && $+functions[zhelp] && $+functions[upkg] ))")
     finally:
         session.close()
 
@@ -386,7 +444,8 @@ def nounset_startup() -> None:
     session.sync(timeout=45)
     try:
         PROBE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        session.sendline(
+        PROBE_FILE.unlink(missing_ok=True)
+        session.check(
             '{ print "z=$+functions[z] zi=$+functions[zi]"; } > '
             + shlex.quote(str(PROBE_FILE))
         )
@@ -440,9 +499,7 @@ def fzf_blocked() -> None:
         text = session.text()
         assert "fzf 0.68.0 or newer is required" in text, "minimum-version diagnostic missing"
         session.clear_output()
-        session.sendline("zhelp --plain package")
-        session.sync()
-        assert "package" in session.text().lower(), "plain zhelp should still work"
+        session.check("zhelp --plain package | command grep upkg")
         session.clear_output()
         session.send(b"\x14")
         time.sleep(1.0)
@@ -525,18 +582,17 @@ def ctrl_t_picker() -> None:
 def ctrl_t_insert() -> None:
     session = fresh_zsh()
     try:
+        session.prepare_buffer_probe()
         session.clear_output()
         session.send(b"\x14")
         session.wait_for("Files", timeout=15)
         session.send("a.txt")
         time.sleep(0.5)
-        offset = len(session.output)
         session.send(b"\r")
         session.wait_no_fzf(timeout=8)
         session.wait_for_zle()
-        # The inserted path is rendered in the zle buffer; matching after the
-        # Enter offset avoids matching the picker list itself.
-        session.wait_for_since("files/a.txt", offset, timeout=10)
+        words = shlex.split(session.capture_buffer())
+        assert len(words) == 1 and (SCRATCH / words[0]).resolve() == (SCRATCH / 'files/a.txt').resolve(), f'wrong inserted buffer: {words}'
         session.send(b"\x03")  # clear the inserted buffer without running it
         session.wait_for_zle()
         time.sleep(0.3)
@@ -604,19 +660,18 @@ def zhelp_palette() -> None:
 def zhelp_queue() -> None:
     session = fresh_zsh()
     try:
+        session.prepare_buffer_probe()
         session.clear_output()
         session.sendline("zhelp")  # no seed query: type the target inside the palette
         session.wait_for("Commands", timeout=15)
         time.sleep(0.3)
         session.send("upkg-plan")
         time.sleep(0.5)
-        offset = len(session.output)
         session.send(b"\r")  # queue the focused example
         session.wait_no_fzf(timeout=10)
         session.wait_for_zle()
-        # The queued example is rendered in the zle buffer; matching after the
-        # Enter offset avoids matching the palette preview text.
-        session.wait_for_since("upkg plan", offset, timeout=10)
+        words = shlex.split(session.capture_buffer())
+        assert words[:2] == ['upkg', 'plan'], f'wrong queued buffer: {words}'
         session.send(b"\x03")  # clear the queued buffer without running it
         session.wait_for_zle()
         time.sleep(0.3)
@@ -681,13 +736,15 @@ def fkill_picker() -> None:
 
 def fkill_signal() -> None:
     """Verify the Enter path sends SIGTERM to exactly the selected process."""
-    dummy = subprocess.Popen(["sleep", "600"])
+    dummy = subprocess.Popen(["sleep", "600"], start_new_session=True)
+    register_process(dummy.pid)
     session = fresh_zsh()
+    session.check('FZF_DEFAULT_OPTS+=" --nth=1"')
     try:
         session.clear_output()
         session.sendline("fkill")
         session.wait_for("Processes", timeout=20)
-        session.send(str(dummy.pid))
+        session.send("^" + str(dummy.pid) + "$")
         time.sleep(0.5)
         session.send(b"\r")
         # Wait for fkill's own confirmation line, then verify the process died.
@@ -695,7 +752,7 @@ def fkill_signal() -> None:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and dummy.poll() is None:
             time.sleep(0.1)
-        assert dummy.poll() is not None, "selected process did not receive SIGTERM"
+        assert dummy.poll() == -signal.SIGTERM, "selected process did not exit from SIGTERM"
     finally:
         session.close()
         if dummy.poll() is None:
@@ -744,72 +801,69 @@ def zi_select() -> None:
         session.close()
 
 
-def cgm_roundtrip() -> None:
-    session = fresh_zsh()
+def cgm_roundtrip(no_color=False) -> None:
+    name = credential_name(os.environ['QA_RUN_ID'])
+    secret = 'qa-' + uuid.uuid4().hex
+    # Register before any storage, so the outer runner can clean up after signals.
+    with (WORK / 'credentials.jsonl').open('a') as stream:
+        stream.write(json.dumps({'name': name}) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+    session = Session(SCRATCH, extra_env={'NO_COLOR': '1'} if no_color else {})
+    session.redactions.append(secret)
     try:
+        session.sync(timeout=45)
         session.clear_output()
-        session.sendline("cgm set QA_PTY_TEST")
-        session.wait_for("Store Credential", timeout=10)
-        session.send("qa-test-1234\r")  # feeds secret-tool through the PTY
-        try:
-            session.wait_for("Credential Saved", timeout=5)
-        except AssertionError:
-            session.send("qa-test-1234\r")
-            session.wait_for("Credential Saved", timeout=10)
+        session.sendline('cgm set ' + name)
+        # Secret Service's actual input prompt, common to rich and plain modes.
+        session.wait_for('Password:', timeout=20)
+        deadline = time.monotonic()+5
+        while termios.tcgetattr(session.master)[3] & termios.ECHO:
+            assert time.monotonic() < deadline, 'credential input echo remained enabled'
+            time.sleep(.02)
+        session.send(secret + '\r')
+        session.wait_for('Saved ' + name if no_color else 'Credential Saved', timeout=20)
         session.sync()
+        session.check('cgm list | command grep -q ' + shlex.quote(name))
+        session.check(f'cgm env {name} && [[ ${name} == {shlex.quote(secret)} ]]')
+        session.check(f'cgm unset {name} && (( ! $+parameters[{name}] ))')
         session.clear_output()
-        session.sendline("cgm list")
+        session.sendline('cgm delete ' + name)
+        session.wait_for('[y/N]', timeout=15)
+        session.send('y\r')
         session.sync()
-        assert "QA_PTY_TEST" in session.text(), "stored credential missing from list"
-        session.clear_output()
-        session.sendline("cgm env QA_PTY_TEST && [[ $QA_PTY_TEST == qa-test-1234 ]] && print CGM-ENV-OK")
-        session.wait_for("CGM-ENV-OK", timeout=10)
-        session.clear_output()
-        session.sendline("cgm unset QA_PTY_TEST && [[ -z ${QA_PTY_TEST-} ]] && print CGM-UNSET-OK")
-        session.wait_for("CGM-UNSET-OK", timeout=10)
-        session.clear_output()
-        session.sendline("cgm delete QA_PTY_TEST")
-        session.wait_for("[y/N]", timeout=10)
-        session.send("y\r")
-        session.wait_quiet(timeout=20)
-        session.sync()
-        session.clear_output()
-        session.sendline("cgm list")
-        session.sync()
-        assert "QA_PTY_TEST" not in session.text(), "deleted credential still listed"
+        session.check('cgm list > "$HOME/cgm-list" && ! command grep -q ' + name + ' "$HOME/cgm-list"')
+        check = bounded(['secret-tool', 'lookup', 'application', 'cgm', 'variable', name], timeout=20)
+        assert check.returncode == 1 and not check.stderr.strip(), 'credential still stored or backend unavailable'
     finally:
         session.close()
+        # Only this unique synthetic name is touched; values never enter logs.
+        bounded(['secret-tool', 'clear', 'application', 'cgm', 'variable', name], timeout=20)
+        check = bounded(['secret-tool', 'lookup', 'application', 'cgm', 'variable', name], timeout=20)
+        assert check.returncode == 1 and not check.stderr.strip(), 'credential cleanup could not verify absence'
+
 
 
 NIX_FEATURES = ("--extra-experimental-features", "nix-command flakes")
 
 
 def nix_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["HOME"] = str(QAHOME)
-    return env
+    return clean_env(QAHOME, REPO)
 
 
 def nix_run(*args: str, timeout: float = 300) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["nix", *NIX_FEATURES, *args],
-        capture_output=True,
-        text=True,
-        env=nix_env(),
-        timeout=timeout,
-        check=False,
-    )
+    return bounded(["nix", *NIX_FEATURES, *args], env=nix_env(), timeout=timeout)
+
 
 
 def profile_elements() -> dict:
     """Return the isolated profile's element map (empty when absent)."""
     result = nix_run("profile", "list", "--json", timeout=60)
-    if result.returncode != 0:
-        return {}
-    try:
-        return json.loads(result.stdout or "{}").get("elements", {})
-    except json.JSONDecodeError:
-        return {}
+    assert result.returncode == 0, f'profile read failed: {result.stderr.strip()}'
+    data = json.loads(result.stdout)
+    assert isinstance(data, dict) and isinstance(data.get('elements'), dict), 'invalid Nix profile schema'
+    return data['elements']
+
 
 
 def wait_profile(predicate, timeout: float, description: str) -> None:
@@ -825,15 +879,22 @@ def wait_profile(predicate, timeout: float, description: str) -> None:
 
 
 def empty_profile() -> None:
+    manifest = QAHOME / '.local/state/nix/profiles/profile/manifest.json'
+    if not manifest.exists():
+        seeded = nix_run('profile', 'add', 'nixpkgs#hello')
+        assert seeded.returncode == 0, f'profile initialization failed: {seeded.stderr.strip()}'
     for name in list(profile_elements()):
-        nix_run("profile", "remove", name, timeout=120)
+        result = nix_run("profile", "remove", name, timeout=120)
+        assert result.returncode == 0, f"profile cleanup failed: {result.stderr.strip()}"
 
 
 def npkg_remove_picker() -> None:
     empty_profile()
     seeded = nix_run("profile", "add", "nixpkgs#hello")
     assert seeded.returncode == 0, f"seeding hello failed: {seeded.stderr.strip()}"
-    assert "hello" in profile_elements(), "hello missing after seeding"
+    seeded_elements = profile_elements()
+    assert "hello" in seeded_elements, "hello missing after seeding"
+    (WORK / "nix-remove-before.json").write_text(json.dumps(seeded_elements, indent=2))
 
     session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME))
     session.sync(timeout=45)
@@ -862,8 +923,10 @@ def npkg_add_picker() -> None:
         time.sleep(0.5)
         session.send(b"\r")
         wait_profile(lambda elements: "cowsay" in elements, timeout=300, description="cowsay install")
+        (WORK / "nix-add-after.json").write_text(json.dumps(profile_elements(), indent=2))
     finally:
         session.close()
+        empty_profile()
 
 
 SCENARIOS: dict[str, tuple] = {
@@ -891,6 +954,7 @@ SCENARIOS: dict[str, tuple] = {
     "fkill-signal": (fkill_signal, "fkill sends SIGTERM to the selected PID"),
     "zi": (zi_picker, "zi opens the zoxide Directories picker"),
     "zi-select": (zi_select, "zi changes directory after selection"),
+    "cgm-no-color": (lambda: cgm_roundtrip(True), "plain credential round trip"),
     "cgm": (cgm_roundtrip, "cgm stores, loads, unsets, and deletes a credential"),
     "npkg-remove": (npkg_remove_picker, "npkg remove picker removes the selection"),
     "npkg-add": (npkg_add_picker, "npkg add picker installs the selection"),
@@ -898,12 +962,8 @@ SCENARIOS: dict[str, tuple] = {
 
 
 def make_home(home: Path, zshrc: str) -> None:
-    """Create an isolated HOME whose config lives in this repository."""
-    (home / ".config").mkdir(parents=True, exist_ok=True)
-    link = home / ".config" / "zsh"
-    if not link.exists():
-        link.symlink_to(REPO)
-    (home / ".zshrc").write_text(zshrc)
+    """Create an isolated HOME whose config lives in the selected repository."""
+    create_home(home, REPO, 'autoload -Uz compinit; compinit -i -d "$HOME/.zcompdump"\n' + zshrc + '\nPROMPT="QA> "\nRPROMPT=""\nbindkey -e\n')
 
 
 def ensure_isolated_home() -> None:
@@ -936,6 +996,9 @@ def main() -> int:
         print("fatal: fzf is required on PATH", file=sys.stderr)
         return 2
 
+    if not __debug__:
+        raise RuntimeError("Python optimization disables assertions; do not use -O")
+    verify_work(WORK, REPO)
     ensure_isolated_home()
     names = [argument for argument in sys.argv[1:] if not argument.startswith("-")]
     names = names or list(SCENARIOS)

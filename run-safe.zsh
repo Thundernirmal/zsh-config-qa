@@ -32,56 +32,24 @@ if [[ ! -r $repo_dir/init.zsh ]]; then
   exit 2
 fi
 
-first_line() {
-  local out=$1
-  local -a lines=( "${(@f)out}" )
-  print -r -- "${lines[1]:-<no output>}"
-}
-
-run_code() {
-  local code=$1 envvar=${2-}
-  local f=$work_dir/case-$$.zsh
-  {
-    print -r -- "source ${(q)repo_dir}/init.zsh 2>/dev/null"
-    print -r -- "$code"
-  } >| "$f"
-  cd -- "$scratch" && env ${=envvar} timeout 120 zsh "$f" 2>&1
-  command rm -f -- "$f"
-}
+python3 "$project_dir/qa_common.py" verify || exit 2
 
 qa() {
-  local name=$1 code=$2 envvar=${3-}
-  local out rc
-  out=$(run_code "$code" "$envvar"); rc=$?
-  if (( rc == 0 )); then
-    print -r -- "PASS  $name"
-    (( n_pass++ ))
-  else
-    print -r -- "FAIL  $name (rc=$rc)"
-    print -r -- "      $(first_line "$out")"
-    failures+=("$name")
-    (( n_fail++ ))
-  fi
+  python3 "$project_dir/qa_common.py" case "$1" "$2" "${3-}"
+  if (( $? == 0 )); then (( n_pass++ )); else (( n_fail++ )); failures+=("$1"); fi
+  return 0
 }
 
 qa_nz() {
-  local name=$1 code=$2 envvar=${3-}
-  local out rc
-  out=$(run_code "$code" "$envvar"); rc=$?
-  if (( rc == 0 )) && [[ -n $out ]]; then
-    print -r -- "PASS  $name"
-    (( n_pass++ ))
-  else
-    print -r -- "FAIL  $name (rc=$rc, empty=$([[ -z $out ]] && print yes || print no))"
-    print -r -- "      $(first_line "$out")"
-    failures+=("$name")
-    (( n_fail++ ))
-  fi
+  python3 "$project_dir/qa_common.py" case "$1" "$2" "${3-}" --nonempty
+  if (( $? == 0 )); then (( n_pass++ )); else (( n_fail++ )); failures+=("$1"); fi
+  return 0
 }
 
 qa_skip() {
-  print -r -- "SKIP  $1 ($2)"
+  python3 "$project_dir/qa_common.py" skip "$1" "$2" || return 2
   (( n_skip++ ))
+  return 0
 }
 
 # qa_opt NAME "tool1 tool2" CODE [ENV] -- skip when a required tool is absent
@@ -112,6 +80,8 @@ network_enabled() {
   return 0
 }
 
+[[ ${QA_LIBRARY_ONLY:-0} == 1 ]] && return 0
+
 print -r -- "repository: $repo_dir"
 print -r -- "work dir:   $work_dir"
 print -r -- ''
@@ -123,7 +93,7 @@ qa 'dots: ....'          'cd nav/sub/deep && .... && [[ $PWD == *scratch ]]'
 qa 'dash returns'        'cd nav && cd sub && - && [[ $PWD == */nav ]]'
 qa_opt 'zoxide z jump' zoxide \
   "cd ${(q)work_dir} && zoxide add ${(q)scratch} >/dev/null 2>&1; z ${(q)scratch} >/dev/null 2>&1 && [[ \$PWD == ${(q)scratch} ]]"
-qa 'mkcd creates+enters' 'rm -rf qa-mkcd; mkcd qa-mkcd && [[ -d qa-mkcd && $PWD == */qa-mkcd ]]'
+qa 'mkcd creates+enters' 'rm -rf qa-mkcd; mkcd qa-mkcd && [[ -d $PWD && $PWD == */qa-mkcd ]]'
 qa 'croot enters root'   'cd gitrepo && mkdir -p x/y && cd x/y && croot && [[ $PWD == */gitrepo ]]'
 
 print -r -- '== Files =='
@@ -131,8 +101,8 @@ qa_nz 'ls'          'ls'
 qa_nz 'll'          'll'
 qa_nz 'la'          'la'
 qa_nz 'lt'          'lt'
-qa 'cat'            'cat files/a.txt | grep -q TODO'
-qa_nz 'peek'        'peek files/a.txt'
+qa 'cat'            'cat files/a.txt | grep TODO'
+qa 'peek' 'peek files/a.txt | grep TODO'
 qa_nz 'dusage'      'dusage . 5'
 qa_nz 'bigfiles'    'bigfiles files 5'
 qa 'extract tar.gz' 'rm -rf out && mkdir out && extract --destination out files/sample.tar.gz && [[ -f out/archive-src.txt ]]'
@@ -147,11 +117,11 @@ qa_fixture 'extract --keep' files/sample.tar.gz \
 qa 'grep match'     'grep TODO files/a.txt >/dev/null'
 qa 'diff differs'   'diff files/a.txt files/b.txt >/dev/null; (( $? == 1 ))'
 qa 'diff equal'     'diff files/a.txt files/a.txt >/dev/null'
-qa_nz 'ff'          'ff a.txt files'
-qa_nz 'ft'          'ft TODO files'
+qa 'ff' 'ff a.txt files | grep a.txt'
+qa 'ft' 'ft TODO files | grep TODO'
 
 print -r -- '== Git =='
-qa_nz 'glog'        'cd gitrepo && glog'
+qa 'glog' 'cd gitrepo && glog | grep second'
 qa_nz 'gitcount'    'cd gitrepo && gitcount'
 qa_nz 'gcount'      'cd gitrepo && gcount'
 qa 'gun resets'     'rm -rf ../gunrepo && cp -r gitrepo ../gunrepo && cd ../gunrepo && gun >/dev/null && [[ $(git rev-list --count HEAD) == 1 ]] && ! git diff --cached --quiet'
@@ -169,7 +139,7 @@ else
 fi
 qa_nz 'ports'       'ports'
 qa_nz 'path'        'path'
-qa 'fanprofile runs' 'fanprofile >/dev/null 2>&1 || true; true'
+qa 'fanprofile help' 'fanprofile --help | grep Usage'
 
 print -r -- '== Meta =='
 qa_nz 'tips'        'tips'
@@ -184,8 +154,8 @@ fi
 print -r -- '== Meta (global aliases enabled) =='
 qa 'G alias'        '[[ $(print "aaa\nbbb" G bbb) == bbb ]]' 'ZSH_GLOBAL_ALIASES=1'
 qa 'W alias'        '[[ $(print "aaa\nbbb" W) == 2 ]]' 'ZSH_GLOBAL_ALIASES=1'
-qa 'H alias'        '[[ $(print "aaa\nbbb" H) == aaa ]]' 'ZSH_GLOBAL_ALIASES=1'
-qa 'T alias'        '[[ $(print "aaa\nbbb" T) == bbb ]]' 'ZSH_GLOBAL_ALIASES=1'
+qa 'H alias'        '[[ $(print -l {1..15} H) == $(print -l {1..10}) ]]' 'ZSH_GLOBAL_ALIASES=1'
+qa 'T alias'        '[[ $(print -l {1..15} T) == $(print -l {6..15}) ]]' 'ZSH_GLOBAL_ALIASES=1'
 qa 'L alias'        'print "aaa\nbbb" L >/dev/null' 'ZSH_GLOBAL_ALIASES=1'
 qa 'NE alias'       'command false NE; (( $? == 1 ))' 'ZSH_GLOBAL_ALIASES=1'
 qa 'NUL alias'      '[[ -z $(print hello NUL) ]]' 'ZSH_GLOBAL_ALIASES=1'

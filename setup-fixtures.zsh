@@ -12,7 +12,8 @@ typeset -r work_dir=${QA_WORK_DIR:-$project_dir/.work}
 typeset -r scratch=$work_dir/scratch
 typeset -r repo_dir=${ZSH_CONFIG_DIR:-$HOME/.config/zsh}
 
-command mkdir -p -- "$work_dir" || exit 1
+python3 "$project_dir/qa_common.py" verify || exit 2
+[[ ! -L $scratch ]] || { print -u2 "fatal: scratch is a symlink"; exit 2; }
 command rm -rf -- "$scratch"
 command mkdir -p -- "$scratch"/nav/sub/deep "$scratch"/files
 cd -- "$scratch" || exit 1
@@ -68,7 +69,7 @@ cd -- .. || exit 1
 # --- zoxide seed -------------------------------------------------------
 # Seed the database so `z` has a deterministic target even on a cold db.
 if (( $+commands[zoxide] )); then
-  command zoxide add "$scratch" >/dev/null 2>&1 || true
+  command zoxide add "$scratch" >/dev/null 2>&1 || exit 1
 fi
 
 print -r -- "fixtures ready under $scratch"

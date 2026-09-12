@@ -11,7 +11,7 @@
 #   QA_WORK_DIR       fixture/work directory (default: ./.work)
 
 emulate -L zsh
-setopt no_unset
+setopt no_unset pipe_fail
 
 typeset -r project_dir=${0:A:h}
 typeset -r work_dir=${QA_WORK_DIR:-$project_dir/.work}
@@ -26,32 +26,11 @@ if [[ ! -d $scratch ]]; then
   exit 2
 fi
 
-# Inherited fzf options from the invoking shell must not leak into the checks.
-typeset -ra strip_fzf=(
-  FZF_DEFAULT_OPTS FZF_CTRL_T_OPTS FZF_CTRL_R_OPTS FZF_ALT_C_OPTS
-  FZF_COMPLETION_OPTS FZF_COMPLETION_PATH_OPTS FZF_COMPLETION_DIR_OPTS
-)
-typeset -a env_args
-local var
-for var in "${strip_fzf[@]}"; do
-  env_args+=(-u "$var")
-done
-
+python3 "$project_dir/qa_common.py" verify || exit 2
 check() {
-  local name=$1 code=$2 envs=${3-}
-  local out rc
-  out=$(cd -- "$scratch" && env "${env_args[@]}" ${=envs} zsh -fc "source ${(q)repo_dir}/init.zsh 2>/dev/null; $code" 2>&1)
-  rc=$?
-  if (( rc == 0 )); then
-    print -r -- "PASS  $name"
-    (( n_pass++ ))
-  else
-    print -r -- "FAIL  $name (rc=$rc)"
-    local -a lines=( "${(@f)out}" )
-    print -r -- "      ${lines[1]:-<no output>}"
-    failures+=("$name")
-    (( n_fail++ ))
-  fi
+  python3 "$project_dir/qa_common.py" case "$1" "$2" "${3-}"
+  if (( $? == 0 )); then (( n_pass++ )); else (( n_fail++ )); failures+=("$1"); fi
+  return 0
 }
 
 print -r -- "repository: $repo_dir"
@@ -63,15 +42,17 @@ for theme in catppuccin-mocha catppuccin-latte nord gruvbox-dark terminal; do
 done
 
 print -r -- '== Glyph modes =='
-check 'NO_NERD_FONT becomes unicode' 'ztheme current | grep -qi unicode' 'NO_NERD_FONT=1'
-check 'glyphs ascii tier' 'ztheme current | grep -qi ascii' 'ZSH_UI_GLYPHS=ascii'
-check 'LC_ALL=C auto becomes ascii' 'ztheme current | grep -qi ascii' 'LC_ALL=C ZSH_UI_GLYPHS=auto'
+check 'NO_NERD_FONT becomes unicode' 'ztheme current | grep -i unicode' 'NO_NERD_FONT=1'
+check 'glyphs ascii tier' 'ztheme current | grep -i ascii' 'ZSH_UI_GLYPHS=ascii'
+check 'LC_ALL=C auto becomes ascii' 'ztheme current | grep -i ascii' 'LC_ALL=C ZSH_UI_GLYPHS=auto'
 
 print -r -- '== Custom palettes =='
 check 'complete custom palette applies' 'typeset -gA ZSH_UI_CUSTOM_COLORS; for role in "${_ZSH_UI_THEME_ROLES[@]}"; do ZSH_UI_CUSTOM_COLORS[$role]=101010; done; ZSH_UI_CUSTOM_COLORS[accent]=abcdef; ZSH_UI_THEME=custom; _zsh_theme_resolve_settings && _fzf_require_ready && [[ $FZF_DEFAULT_OPTS == *abcdef* ]]'
-check 'incomplete custom falls back atomically' 'typeset -gA ZSH_UI_CUSTOM_COLORS; ZSH_UI_CUSTOM_COLORS[bg]=101010; ZSH_UI_THEME=custom; _zsh_theme_resolve_settings; _fzf_require_ready; [[ $FZF_DEFAULT_OPTS != *101010* ]]'
+check 'incomplete custom falls back atomically' 'typeset -gA ZSH_UI_CUSTOM_COLORS; ZSH_UI_CUSTOM_COLORS[bg]=101010; ZSH_UI_THEME=custom; _zsh_theme_resolve_settings && _fzf_require_ready && [[ $FZF_DEFAULT_OPTS != *101010* ]]'
 
 print -r -- ''
+check 'NO_COLOR plain output' 'ztheme show nord > "$HOME/plain.out" && ! command grep -q "$(printf "\\033")" "$HOME/plain.out"' 'NO_COLOR=1'
+
 print -r -- "env sweep: $n_pass passed, $n_fail failed"
 if (( n_fail > 0 )); then
   print -r -- "failed: ${(j:, :)failures}"

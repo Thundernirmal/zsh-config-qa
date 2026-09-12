@@ -1,257 +1,108 @@
-# zsh-config-qa
+# Local Zsh release gate
 
-Live QA harness for the shared Zsh configuration in `~/.config/zsh` (the
-repository is configurable). It exercises the parts of the configuration that
-unit-style fixtures cannot: the real interactive terminal boundary, real
-installed tools, and real package-manager and credential-service round trips.
+A private, local test project for deciding whether a Zsh configuration revision is ready to release. It runs independently of GitHub Actions and writes nothing to the configuration repository.
 
-The repository's own `scripts/run-tests.zsh` proves the modules with fake
-binaries and `scripts/test-fzf-pty.py` proves one fzf picker through a real PTY.
-This project complements those with a full live pass:
-
-- every user-facing command runs for real (navigation, files, git, system,
-  meta aliases, themes, packages, credentials),
-- every themed widget/picker is driven through a real PTY (Ctrl+T, Ctrl+R,
-  Alt+C, `**<Tab>` completion, `zhelp`, `fbr`, `fkill`, `zi`, `npkg`, `cgm`),
-- environment matrices are verified (layouts, glyph modes, `NO_COLOR`,
-  inherited `FZF_DEFAULT_OPTS`, custom palettes, fzf cold/warm cache),
-- mutating scenarios run against throwaway state (`npkg` uses an isolated
-  HOME/profile, `cgm` creates and deletes a test credential, `fkill` signals a
-  dummy process).
-
-## Requirements
-
-Required:
-
-- Linux (uses `/proc` for child-process detection)
-- `zsh` 5.9+ (tested with 5.9.2)
-- `fzf` 0.68.0+ (tested with 0.74.3)
-- `git`, `python3` 3.9+ (standard library only), coreutils `timeout`
-
-Optional tooling decides which checks run:
-
-| Tool | Enables |
-| --- | --- |
-| `nix` + `jq` | `npkg` picker scenarios and `npkg help/list` checks |
-| `secret-tool` + a running Secret Service | `cgm` scenarios and checks |
-| `pacman` (or another supported manager) | real `upkg` read-only checks |
-| `curl` | `weather`, `headers`, `myip`, `zdoctor --network` |
-| `xz`, `bzip2` | tar.xz / tar.bz2 fixture archives |
-| `zoxide` | `z`/`zi` checks |
-
-Missing optional tools produce `SKIP` lines, not failures.
-
-## Quick start
+Run the full gate from a normal logged-in terminal:
 
 ```sh
-cd ~/projects/zsh-config-qa
-
-./run-all.zsh                 # fixtures + safe + env + pty
-./run-all.zsh fixtures safe   # selected stages only
-
-./setup-fixtures.zsh          # rebuild fixtures only
-./run-safe.zsh                # read-only command sweep
-./run-env.zsh                 # theme/glyph/custom-palette matrix
-python3 qa-pty.py --list      # list interactive scenarios
-python3 qa-pty.py ctrl-t      # run one scenario
-python3 qa-pty.py             # run all interactive scenarios
+cd /home/nirmal/projects/zsh-config-qa
+./run-all.zsh
 ```
 
-Exit codes: `0` success, `1` at least one check failed, `2` configuration or
-prerequisite problem (missing fixtures, repository, or `fzf`).
-
-## Environment variables
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `ZSH_CONFIG_DIR` | `~/.config/zsh` | Repository under test (must contain `init.zsh`) |
-| `QA_WORK_DIR` | `./.work` | Fixtures, isolated HOME, probe output |
-| `QA_SKIP_NETWORK` | unset | `1` skips network-dependent safe-sweep checks |
-
-`.work/` is disposable and gitignored. Deleting it only forces fixture and
-isolated-profile rebuilds.
-
-`ZSH_CONFIG_DIR` is authoritative for `run-safe.zsh`, `run-env.zsh`, and the
-isolated PTY scenarios. The remaining PTY scenarios launch a real interactive
-shell, which reaches the repository through the user's `~/.zshrc`
-(`source ~/.config/zsh/init.zsh`). Keep the default install path when you want
-those scenarios to reflect the installed configuration.
-
-## Layout
-
-| Path | Purpose |
-| --- | --- |
-| `run-all.zsh` | Orchestrates the stages and reports per-stage status |
-| `setup-fixtures.zsh` | Builds scratch dirs, archives, git repos, and pull-rebase fixtures |
-| `run-safe.zsh` | Read-only sweep over every user-facing command |
-| `run-env.zsh` | Theme, glyph, and custom-palette checks |
-| `qa-pty.py` | Interactive PTY driver and scenario suite |
-| `.work/` | Generated state (fixtures, isolated HOME, probes) |
-
-## Stage: fixtures
-
-`setup-fixtures.zsh` recreates `$QA_WORK_DIR/scratch` deterministically:
-
-- `nav/sub/deep`, `files/` with text files and archives (`tar.gz`, `tar.xz`,
-  `tar.bz2`, `zip` when the tools exist),
-- `gitrepo/` with two commits,
-- `gpr-origin.git` + `gpr-seed` + `gpr-clone`, where the clone is one commit
-  behind origin so `gpr` must rebase,
-- a zoxide database seed for the scratch directory.
-
-## Stage: safe sweep
-
-`run-safe.zsh` runs each case in a fresh child zsh that sources `init.zsh`, so
-aliases, lazy loaders, theme wiring, and guarded integrations behave exactly as
-they do in a real shell. Categories and representative cases:
-
-| Category | Cases |
-| --- | --- |
-| Navigation | `..`, `...`, `....`, `-`, `z`, `mkcd`, `croot` |
-| Files | `ls`, `ll`, `la`, `lt`, `cat`, `peek`, `dusage`, `bigfiles`, `extract` (gz/zip/xz/bz2/`--keep`), `grep`, `diff`, `ff`, `ft` |
-| Git | `glog`, `gitcount`, `gcount`, `gun`, `gpr` |
-| System | `weather`, `headers`, `myip`, `ports`, `path`, `fanprofile` |
-| Meta | `G`, `W`, `H`, `T`, `L`, `NE`, `NUL` (with `ZSH_GLOBAL_ALIASES=1`), `tips`, `zhelp --plain`, `zdoctor`, `zdoctor --network --secrets` |
-| Theme | `ztheme list/current/show/export/use/reset`, invalid theme rejection |
-| Packages | `upkg managers/search/outdated/plan/upgrade --dry-run`, `npkg help/list` |
-| Credentials | `cgm check/list/status` (never retrieves values) |
-
-No case mutates the system: git cases use fixtures, package cases are
-read-only or dry-run, and credential cases only read names and health.
-
-## Stage: environment matrix
-
-`run-env.zsh` sources `init.zsh` in a non-interactive child (with inherited
-`FZF_*` variables stripped) and checks:
-
-- `ztheme show` for every built-in palette,
-- `NO_NERD_FONT=1` resolves to the Unicode glyph tier,
-- `ZSH_UI_GLYPHS=ascii` and `LC_ALL=C ZSH_UI_GLYPHS=auto` resolve to ASCII,
-- a complete custom palette applies, and an incomplete one falls back
-  atomically with no partial colors.
-
-Layout and fzf-option behavior lives in the PTY stage instead, because the fzf
-integration only exports its final options in a real interactive session.
-
-## Stage: interactive PTY scenarios
-
-`qa-pty.py` drives a real interactive zsh through a PTY with its own
-controlling terminal. Every scenario is available individually:
+The default target is `~/.config/zsh`. To test another checkout:
 
 ```sh
-python3 qa-pty.py --list
-python3 qa-pty.py ctrl-t fkill-signal
+./run-all.zsh --repo /path/to/zsh-config
 ```
 
-| Scenario | What it proves |
-| --- | --- |
-| `startup` | Fresh interactive startup is clean, no diagnostics |
-| `nounset-startup` | `setopt NO_UNSET` before sourcing init still loads zoxide and the other integrations |
-| `fzf-cold-start` | An empty fzf cache is rebuilt in the isolated HOME |
-| `fzf-warm-start` | A warm cache is reused without regeneration |
-| `fzf-blocked` | fzf 0.67 blocks pickers but not plain `zhelp` or other commands |
-| `env-no-color` | `NO_COLOR=1` reaches the pickers (`--no-color`, `--color=never`) |
-| `env-extra-opts` | `ZSH_FZF_EXTRA_OPTS` is appended to the managed options |
-| `env-inherited-opts` | Inherited `FZF_DEFAULT_OPTS` survives alongside managed chrome |
-| `env-layout-compact/roomy/minimal` | Each layout exports its expected frame, padding, and preview width |
-| `ctrl-t` | Files picker opens; Ctrl+P and Ctrl+/ toggles work; Esc cancels |
-| `ctrl-t-insert` | Selecting a file inserts its path without executing it |
-| `ctrl-r` | History picker opens word-wrapped with preview toggles |
-| `alt-c` | Directories picker opens with hidden preview |
-| `completion` | `**<Tab>` opens the fzf completion overlay |
-| `zhelp` | Commands palette opens with the Usage preview |
-| `zhelp-queue` | Enter queues the selected example on the command line |
-| `fbr` / `fbr-select` | Branch picker opens; selecting checks the branch out |
-| `fkill` / `fkill-signal` | Picker opens; Esc sends nothing; Enter sends SIGTERM to the selected PID |
-| `zi` / `zi-select` | zoxide picker opens; selecting changes directory |
-| `cgm` | Store (hidden input), list, load, unset, and delete a test credential |
-| `npkg-remove` | Remove picker removes the selected package from the isolated profile |
-| `npkg-add` | Add picker installs the selected package into the isolated profile |
+Every isolated shell sources that exact checkout, including all PTY scenarios. Your `.zshrc`, aliases, color settings, history, credential catalogue, and Nix profile are not used as test state. The runner retains your PATH and session bus to reach installed tools and Secret Service.
 
-Scenarios whose tools are missing are reported as `SKIP` with the missing
-dependency; they are not failures.
+## Read the verdict
 
-## Safety
+The last lines name the verdict and a saved report. Exit codes are suitable for scripts:
 
-- The repository under test is never written to.
-- `npkg` scenarios use `$QA_WORK_DIR/nixhome` as HOME and its own Nix profile
-  (`~/.local/state/nix/profiles` beneath that HOME). Your real profile is not
-  touched.
-- The `cgm` scenario stores `QA_PTY_TEST` in the real Secret Service and
-  deletes it before finishing. It never prints credential values.
-- `fkill-signal` only ever signals a `sleep 600` process started by the test.
-- No `upkg upgrade` or `upkg clean` is ever executed; only read-only and
-  `--dry-run` paths run.
-- `extract`, `gun`, `mkcd`, `fbr-select`, and `zi-select` operate on fixture
-  paths under `$QA_WORK_DIR`.
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `YES` | 0 | Full required coverage passed, both interactive passes succeeded, cleanup was verified, and the target was clean and its before/after fingerprints matched. |
+| `NO` | 1 | A check failed, timed out, produced missing/duplicate/malformed evidence, changed the target, or could not clean up. Inspect the report. |
+| `INCOMPLETE` | 2 | The run was partial, offline, interrupted, skipped a required scenario, used fewer than two PTY repetitions, or tested a dirty target. It does not approve a release. |
 
-## Design notes
+Configuration/argument errors also return nonzero. No exit code other than 0 approves release. A prior `YES` applies only to the recorded commit, content fingerprint, machine, and tool versions; run again after changes. A failing run is never automatically retried into a green result.
 
-- **Prompt synchronization.** Each step sends a `print "QA-${:-SYNC}-…"`
-  command. The echoed command line contains the literal `${:-SYNC}` while the
-  executed output contains `QA-SYNC`, so a single marker occurrence proves the
-  command actually ran, not just that it was typed.
-- **zle readiness.** After each command the driver waits until the PTY leaves
-  canonical mode, which means zle is accepting keys. Without this, keystrokes
-  can be swallowed by the line discipline before zle starts.
-- **Controlling terminal.** The child calls `setsid()` and `TIOCSCTTY` so
-  `/dev/tty` works; the generated fzf widgets read from it.
-- **Picker lifecycle.** `wait_no_fzf()` watches `/proc/<pid>/…/children`
-  until the fzf process is gone before typing the next command, avoiding the
-  race where sync text lands in fzf's query.
-- **Effect-based verification.** Scenarios that select from a picker verify
-  the effect directly instead of typing a follow-up command, because
-  keystrokes can be lost while the widget returns and runs foreground work:
-  zle buffer render (`ctrl-t-insert`, `zhelp-queue`), `/proc/<pid>/cwd`
-  (`zi-select`), `.git/HEAD` (`fbr-select`), the dummy process state
-  (`fkill-signal`), and the isolated Nix profile (`npkg-*`).
-- **Terminal stripping.** ANSI/OSC sequences are removed lazily and
-  non-greedily; ST-terminated OSC sequences would otherwise swallow rendered
-  text up to the next BEL.
-- **Isolated HOME.** Scenarios that need a clean HOME use
-  `$QA_WORK_DIR/nixhome` with a `.config/zsh` symlink to the repository, the
-  same pattern as the repository's fixed-install-path smoke test.
+The report records the harness fingerprint, target identity, machine, executable hashes, and tool versions. Changing the harness during a run invalidates the result too.
 
-## Coverage map
+The report lives in `.runs/<timestamp>-<id>/report.md`, with a machine-readable `report.json`. `.runs/latest.json` points to the most recently completed run. Logs and per-case stdout/stderr are retained beside the report. Evidence is local-only and gitignored; run directories are private to your user. A half-written/interrupted run starts with an `INCOMPLETE` report, never a stale success.
 
-The harness covers the local `qa-features.csv` checklist rows from the
-repository, plus extensions:
+## What runs
 
-| Checklist area | Harness coverage |
-| --- | --- |
-| Cold/warm startup, empty cache | `startup`, `fzf-cold-start`, `fzf-warm-start` |
-| `NO_UNSET` startup robustness | `nounset-startup` |
-| fzf below minimum | `fzf-blocked` |
-| Theme list/current/show/export/use/reset/validation | `run-env.zsh`, `run-safe.zsh` |
-| Custom palettes (complete/incomplete) | `run-env.zsh` |
-| Layouts, `NO_COLOR`, glyph modes, inherited options | `qa-pty.py` env scenarios |
-| Ctrl+T / Ctrl+R / Alt+C / completion / zhelp / fbr / fkill / zi | dedicated PTY scenarios |
-| `npkg add` / `npkg remove` | real Nix picker scenarios in an isolated profile |
-| `cgm` round trip | real Secret Service scenario |
-| Real managers, network, archives | `run-safe.zsh` |
+1. **Harness self-tests:** fault injection proves failed exit codes, broken pipelines, startup diagnostics, empty output, timeouts, malformed inventories, invalid profiles, and echoed command text cannot pass. These tests deliberately run failing fixtures; their own expected outcomes are recorded separately.
+2. **Configuration regressions:** the selected checkout's ordered `scripts/run-tests.zsh` runs locally.
+3. **Fixtures:** fresh files, archives, Git repositories, navigation targets, and a local pull/rebase remote.
+4. **Command sweep:** 63 live checks with preserved exit status, pipeline failure propagation, startup diagnostics, and retained per-case evidence.
+5. **Environment matrix:** built-in and custom themes, glyph tiers, locale fallback, and plain output. Inherited `NO_COLOR`, `TERM=dumb`, finder options, and theme settings cannot silently change the baseline; cases opt into alternate settings explicitly.
+6. **Real fzf PTY suite:** the selected checkout's terminal test runs against the installed fzf.
+7. **Interactive matrix, twice:** startup and NO_UNSET, cold/warm caches, unsupported-fzf gating, layouts, inherited options, widgets, completion, help queueing, branch selection, navigation, process selection, Nix add/remove, and both rich/plain credential round trips.
 
-## Known limitations
+Insertion and queueing checks read the actual ZLE edit buffer through a test-only widget; they do not trust the final picker redraw.
 
-- Visual appearance (font rendering, perceived contrast, Nerd Font glyph
-  shaping) is not verifiable by automation; the harness asserts terminal
-  output, widths, and option values instead.
-- Destructive package paths (`upkg upgrade`, `upkg clean`) and bulk/SIGKILL
-  `fkill` review paths are intentionally excluded.
-- `npkg-add` needs network access on a cold Nix cache to build the nixpkgs
-  attribute index; the index is cached in the isolated HOME afterward.
-- `cgm` requires a running Secret Service; without one the scenario is either
-  skipped (`secret-tool` missing) or fails with the service diagnostic.
-- Linux-only due to `/proc` child inspection and `timeout` usage.
+`coverage.json` is the required case inventory. Missing, duplicate, or unexpected results fail the gate even if a stage exits 0. Skipped optional integrations make full release verification incomplete; installing a binary without a working backend does not count as coverage.
 
-## Troubleshooting
+## Requirements and environment
 
-- `fatal: fixtures missing` — run `./setup-fixtures.zsh` (or `./run-all.zsh`).
-- `fatal: no init.zsh under …` — set `ZSH_CONFIG_DIR` to the repository.
-- `npkg` scenarios skipped — install `nix` and `jq`.
-- `cgm` scenario fails at "Store Credential" — no Secret Service provider is
-  running in the session (`gnome-keyring`, `kwallet`, etc.).
-- `fzf-blocked` reports the minimum-version diagnostic in your real shell —
-  upgrade fzf to 0.68.0 or newer.
-- A widget scenario times out after Esc — rerun it; the driver retries the
-  cancel and waits for the fzf process to exit, but terminal timing can still
-  vary under heavy load.
+Use GNU/Linux with Python 3.9+, Zsh, Git, fzf 0.68.0+, and the configuration's normal dependencies. The live suite uses installed tools, coreutils, a reachable network, a working Nix daemon plus `jq`, and an unlocked Linux Secret Service plus `secret-tool`. The Pacman checks require Pacman on this host; another host without it reports incomplete coverage until an explicit equivalent is added to the private harness. No dependencies are downloaded or installed automatically by the runner.
+
+Run as your normal user, not root. The gate does not invoke sudo or unlock a keyring. Nix may download/build packages into its store during isolated profile testing. Network, daemon, or keyring failures are reported with logs instead of silently skipped. Install/check the necessary local services before expecting `YES`.
+
+The terminal baseline is UTF-8, `xterm-256color`, and truecolor, with inherited finder/theme/color settings removed. Every test HOME, XDG config/cache/data/state directory, history file, and compinit cache belongs to the run. The real session bus and runtime directory remain available for Secret Service.
+
+## Isolation and cleanup
+
+- Each invocation creates a new uniquely named directory. Old state is never reused as passing evidence.
+- Fixture scripts require a matching ownership marker and reject unsafe paths. They cannot be pointed at an arbitrary directory for recursive deletion.
+- A per-user lock prevents concurrent gates from racing shared services.
+- All PTYs and bounded command groups are registered. The Linux runner adopts orphaned descendants so a crashed shell cannot leave them outside normal cleanup. Timeouts and ordinary termination signals trigger cleanup.
+- Credential names are unique, valid uppercase names scoped to the run. Only synthetic values are stored; value checks use executed command status rather than echoed text. The name is registered before storage so the runner can remove it even if a prompt is interrupted. Both rich and plain prompts are tested. No real credential name or value is reused.
+- Nix changes only a profile beneath the run's isolated HOME. The test never modifies your profile or performs system-wide garbage collection. Downloaded store paths may remain for normal Nix garbage collection.
+- The process test starts and targets its own dummy process; it checks the actual termination signal.
+- Run artifacts are intentionally retained for debugging. Delete old `.runs/` entries when you no longer need the evidence.
+
+SIGKILL, power loss, and machine crashes cannot execute cleanup code. After an interrupted run, retry its registered cleanup before deleting evidence:
+
+```sh
+./run-all.zsh --cleanup /absolute/path/to/.runs/<run-id>
+```
+
+Cleanup checks only processes whose PID and creation identity still match and only credentials registered in that run's unique namespace. Failure to verify cleanup returns nonzero. Keep the report if a service is unavailable and retry when it recovers.
+
+## Focused development runs
+
+```sh
+./run-all.zsh selftest
+./run-all.zsh safe env       # fixtures added automatically
+./run-all.zsh pty            # fixtures added automatically; all PTY cases twice
+./run-all.zsh --offline      # useful diagnostics; never a release approval
+./run-all.zsh --repeat 3     # extra complete interactive repetitions
+./run-all.zsh --stage-timeout 3600
+./run-all.zsh --results-dir /some/private/local/directory
+```
+
+Focused and offline runs deliberately return `INCOMPLETE` when their selected checks pass. Stage timeout defaults to 30 minutes; individual commands are bounded too. Slow progress is printed every 30 seconds. Do not run the internal fixture/sweep scripts directly: they require the launcher-provided owned directory and evidence paths.
+
+## Maintaining the harness
+
+Add assertions about observable effects, not just banners or nonempty diagnostic output. Verify negative cases before trusting a new test. When adding/removing scenarios, update `coverage.json` intentionally and run the full gate. Keep mutating cases limited to owned state and register resources before creating them. Do not mask failures with `|| true`, trust cached probe files, turn backend errors into empty data, or match success markers that appear in echoed commands.
+
+Source files:
+
+- `release.py`: orchestration, locking, target identity, verdicts, and recovery.
+- `qa_common.py`: owned paths, isolated environments, bounded commands, and case evidence.
+- `selftest.py`, `tests/`: fault-injection checks for the test machinery.
+- `setup-fixtures.zsh`, `run-safe.zsh`, `run-env.zsh`: fixtures and command/environment cases.
+- `qa-pty.py`: real interactive scenarios and effect checks.
+- `coverage.json`: required case identities.
+
+## Limits of a YES
+
+`YES` means this local automated release gate passed; it is not a guarantee for every distribution, terminal emulator, future tool version, or hardware device. Font shaping and perceived contrast require human judgment and are not claimed. System-wide package upgrade/cleanup, real credential operations, and bulk/SIGKILL against user processes are never performed. Their guarded behavior is covered by the configuration's isolated regression fixtures. The `fanprofile` live sweep tests its help contract; platform-specific hardware reads remain environment-dependent.
+
+This repository does not publish anything, create releases, or change the target's Git state.
