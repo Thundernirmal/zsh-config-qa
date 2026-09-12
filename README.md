@@ -94,6 +94,7 @@ Add assertions about observable effects, not just banners or nonempty diagnostic
 
 Source files:
 
+- [AGENTS.md](AGENTS.md): architecture and maintenance rules for coding agents.
 - `release.py`: orchestration, locking, target identity, verdicts, and recovery.
 - `qa_common.py`: owned paths, isolated environments, bounded commands, and case evidence.
 - `selftest.py`, `tests/`: fault-injection checks for the test machinery.
