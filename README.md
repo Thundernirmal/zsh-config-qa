@@ -199,9 +199,12 @@ dependency; they are not failures.
 - **Picker lifecycle.** `wait_no_fzf()` watches `/proc/<pid>/…/children`
   until the fzf process is gone before typing the next command, avoiding the
   race where sync text lands in fzf's query.
-- **Mutation verification.** The `npkg` scenarios seed and verify the isolated
-  profile directly from Python and poll it after the picker selection. Typed
-  follow-up commands would race the widget's foreground `nix` process.
+- **Effect-based verification.** Scenarios that select from a picker verify
+  the effect directly instead of typing a follow-up command, because
+  keystrokes can be lost while the widget returns and runs foreground work:
+  zle buffer render (`ctrl-t-insert`, `zhelp-queue`), `/proc/<pid>/cwd`
+  (`zi-select`), `.git/HEAD` (`fbr-select`), the dummy process state
+  (`fkill-signal`), and the isolated Nix profile (`npkg-*`).
 - **Terminal stripping.** ANSI/OSC sequences are removed lazily and
   non-greedily; ST-terminated OSC sequences would otherwise swallow rendered
   text up to the next BEL.
