@@ -1,6 +1,6 @@
 # ISSUE-0027: Pre-stage setup failures escape the report/recovery envelope
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** fail-closed
 - **Affected:** `release.py:254` (`before = snapshot(repo)` before the run directory and before the `try`), `release.py:26-41` (`snapshot` with `check=True`), `release.py:246` (only `init.zsh` is validated), `release.py:274` (`coverage.json` parse), `release.py:277-279` (`tool_metadata`)
@@ -110,3 +110,23 @@ in `report.json`.
 - Unit test with a tool path that disappears before `read_bytes` asserts the
   report is still written with an error entry, not a traceback.
 - Add named self-test identities to `coverage.json` in the same change.
+
+## Fix (2026-09-12, batch 2)
+
+- **Status change:** Open → Fixed.
+- `release.require_git_checkout()` validates the target with a bounded
+  `git rev-parse --verify HEAD` (using the redirect-proof `git_env()`, and
+  converting a missing `git` binary into a `ValueError`) before any run
+  directory, marker, or snapshot exists; `main()` turns failures into
+  `parser.error` (exit 2, no traceback).
+- `tool_metadata()` was rewritten to never raise: each tool records
+  `{'available': True, 'error': ...}` when its path cannot be resolved/read, so
+  the initial `INCOMPLETE` report and cleanup path always exist.
+- `coverage.json` parsing/validation now happens before the results root is
+  created, so an invalid inventory can no longer leave a marked, reportless
+  run directory; a stale inherited `QA_WORK_DIR` is popped before any probe so
+  `bounded()` cannot register into a foreign run's ledger.
+- Fault-injection tests: `test_non_git_target_is_rejected_before_run_state`
+  (plain directory and empty/no-commit repository raise; initialized checkout
+  passes) and `test_tool_metadata_reports_tool_errors_instead_of_raising`.
+- Verified: full gate `20260912-205801-76cafce0` = `YES`, exit 0.

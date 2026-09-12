@@ -145,7 +145,13 @@
     "test_gate.GateTests.test_startup_exit_cannot_pass_case",
     "test_gate.GateTests.test_non_dict_evidence_row_is_malformed",
     "test_gate.GateTests.test_duplicate_expected_cannot_pass",
-    "test_gate.GateTests.test_failed_selftest_outcome_lands_in_stage_ledger"
+    "test_gate.GateTests.test_failed_selftest_outcome_lands_in_stage_ledger",
+    "test_gate.GateTests.test_snapshot_ignores_inherited_git_env",
+    "test_gate.GateTests.test_isolation_strips_git_and_nix_redirects",
+    "test_gate.GateTests.test_non_git_target_is_rejected_before_run_state",
+    "test_gate.GateTests.test_tool_metadata_reports_tool_errors_instead_of_raising",
+    "test_gate.GateTests.test_tool_metadata_records_first_nonempty_version_line",
+    "test_gate.GateTests.test_sighup_and_sigquit_route_to_interrupt"
   ],
   "fzf": [
     "narrow-unicode",

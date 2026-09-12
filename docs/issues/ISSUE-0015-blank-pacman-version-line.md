@@ -1,6 +1,6 @@
 # ISSUE-0015: tool_metadata records a blank first version line for tools like pacman
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** evidence-integrity
 - **Affected:** `release.py:54-67`, `release.py:64-65`
@@ -120,3 +120,18 @@ zero-exit probe that produced no non-empty line.
 - Assert a probe with empty output records `None`/`''` explicitly and can be
   distinguished from a good version in `report.json`.
 - No coverage inventory change unless a new named selftest is introduced.
+
+## Fix (2026-09-12, batch 2)
+
+- **Status change:** Open → Fixed.
+- `tool_metadata()` now records the first **non-empty** version line, or
+  `null` when a probe produced none, instead of `[""]`; empty output can no
+  longer masquerade as a version while `version_exit` stays `0`. The rewrite
+  also makes the probe failure-safe (per-tool `error` entries) as part of the
+  ISSUE-0027 work; `secret-tool` still skips the `--version` probe.
+- Fault-injection tests: `test_tool_metadata_records_first_nonempty_version_line`
+  (blank-only output → `None`; banner-then-version → `['VERSION 1']`; both
+  fail on revert to `splitlines()[:1]`) and
+  `test_tool_metadata_reports_tool_errors_instead_of_raising`.
+- Verified: review approved with the required test added; full gate
+  `20260912-205801-76cafce0` = `YES`, exit 0.

@@ -22,9 +22,27 @@ PROJECT = Path(__file__).resolve().parent
 ALL_STAGES = ['selftest', 'regression', 'fixtures', 'safe', 'env', 'fzf', 'pty']
 
 
+def git_env():
+    """Runner-side Git environment: repository discovery cannot be redirected."""
+    return {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+
+
+def require_git_checkout(repo):
+    """Validate the target is a usable Git checkout before any run state exists."""
+    try:
+        probe = bounded(['git', '-C', str(repo), 'rev-parse', '--verify', 'HEAD'],
+                        env=git_env(), timeout=30)
+    except OSError as error:
+        raise ValueError(f'git is not available: {error}') from error
+    if probe.returncode != 0:
+        raise ValueError('not a usable Git checkout: '
+                         f'{probe.stderr.strip() or f"git exit {probe.returncode}"}')
+
+
 def snapshot(repo):
     def git(*args):
-        p = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, check=True)
+        p = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, check=True,
+                           env=git_env())
         return p.stdout
     names = git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
     digest = hashlib.sha256()
@@ -52,17 +70,23 @@ def harness_identity():
 
 
 def tool_metadata(env):
+    """Probe installed tools; never fail the run over one broken binary."""
     result={}
     for tool in ['zsh','fzf','git','python3','nix','jq','secret-tool','zoxide','pacman']:
         path=shutil.which(tool, path=env.get('PATH'))
         if not path:
             result[tool]={'available':False}
             continue
-        file=Path(path).resolve()
-        entry={'path':str(file),'sha256':hashlib.sha256(file.read_bytes()).hexdigest()}
-        if tool != 'secret-tool':
-            probe=bounded([path,'--version'],env=env,timeout=5)
-            entry.update(version=(probe.stdout or probe.stderr).splitlines()[:1],version_exit=probe.returncode)
+        entry={'path':path,'available':True}
+        try:
+            file=Path(path).resolve()
+            entry.update(path=str(file), sha256=hashlib.sha256(file.read_bytes()).hexdigest())
+            if tool != 'secret-tool':
+                probe=bounded([path,'--version'],env=env,timeout=5)
+                lines=[line for line in (probe.stdout or probe.stderr).splitlines() if line.strip()]
+                entry.update(version=lines[:1] or None, version_exit=probe.returncode)
+        except Exception as error:
+            entry['error']=f'{type(error).__name__}: {error}'
         result[tool]=entry
     return result
 
@@ -119,6 +143,23 @@ def decide(stages, full, unchanged, clean, cleanup_ok):
     if not stages or not full or not clean or any(s['status'] != 'pass' for s in stages):
         return 'INCOMPLETE', 2
     return 'YES', 0
+
+
+INTERRUPT_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT)
+
+
+def interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
+def install_interrupt_handlers():
+    """Route ordinary termination signals (including hangup) through cleanup."""
+    return {number: signal.signal(number, interrupt) for number in INTERRUPT_SIGNALS}
+
+
+def ignore_interrupt_signals():
+    for number in INTERRUPT_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
 
 
 def own_descendants():
@@ -277,12 +318,25 @@ def main():
     repo = args.repo.resolve()
     if not (repo/'init.zsh').is_file():
         parser.error('target does not contain init.zsh')
+    try:
+        require_git_checkout(repo)
+    except ValueError as error:
+        parser.error(str(error))
     selected = args.stages or ALL_STAGES
     if len(set(selected)) != len(selected):
         parser.error('duplicate stages are not allowed')
     if set(selected) & {'safe','env','pty'} and 'fixtures' not in selected:
         selected = ['fixtures', *selected]
     selected = [s for s in ALL_STAGES if s in selected]
+    # Validate the inventory before any run state (dir/marker) can be created.
+    try:
+        coverage = json.loads((PROJECT/'coverage.json').read_text())
+        validate_coverage(coverage, selected)
+    except (OSError, ValueError) as error:
+        parser.error(f'coverage inventory invalid: {error}')
+    # A leftover QA_WORK_DIR would make bounded() register probes into a
+    # foreign run's ledger before this gate allocates its own.
+    os.environ.pop('QA_WORK_DIR', None)
     before = snapshot(repo)
     # One local gate at a time, even when separate results roots are requested.
     root = args.results_dir.resolve()
@@ -303,21 +357,16 @@ def main():
         env['QA_SKIP_NETWORK'] = '1'
     else:
         env.pop('QA_SKIP_NETWORK', None)
+    # Inventory already validated before run state existed; keep the parse here
+    # only for the shared coverage object.
     coverage = json.loads((PROJECT/'coverage.json').read_text())
-    try:
-        validate_coverage(coverage, selected)
-    except ValueError as error:
-        parser.error(f'coverage inventory invalid: {error}')
     stages = []
     interrupted = False
     report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,
                   harness=harness_identity(), machine=platform.platform(), tools=tool_metadata(env),
                   repeat=args.repeat, stages=stages, cleanup_errors=[])
     atomic_json(work/'report.json', report)
-    def stop(signum, frame):
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    install_interrupt_handlers()
     commands = {
         'selftest': [sys.executable, str(PROJECT/'selftest.py')],
         'regression': ['zsh', str(repo/'scripts/run-tests.zsh')],
@@ -349,8 +398,7 @@ def main():
     except Exception as error:
         stages.append(dict(name='runner', status='fail', detail=str(error)))
     finally:
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        ignore_interrupt_signals()
         errors = cleanup(work)
         report['cleanup_errors'] = errors
         try:

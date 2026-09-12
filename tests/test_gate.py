@@ -247,6 +247,80 @@ class GateTests(unittest.TestCase):
         self.assertIn('deliberate failure', row['detail'])
         self.assertFalse((self.root/'bogus-other-file.jsonl').exists())
 
+    def test_snapshot_ignores_inherited_git_env(self):
+        other = self.root/'other'; other.mkdir(); (other/'f.txt').write_text('x\n')
+        for repo_dir in (self.repo, other):
+            subprocess.run(['git','init','-q',str(repo_dir)],check=True)
+            subprocess.run(['git','-C',str(repo_dir),'add','.'],check=True)
+            subprocess.run(['git','-C',str(repo_dir),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                            '-c','commit.gpgsign=false','commit','-qm','fixture'],check=True)
+        clean = release.snapshot(self.repo)
+        with patch.dict(os.environ, {'GIT_DIR': str(self.root/'other'/'.git')}):
+            self.assertEqual(release.snapshot(self.repo), clean)
+        with patch.dict(os.environ, {'GIT_WORK_TREE': str(self.root/'other')}):
+            self.assertEqual(release.snapshot(self.repo)['sha256'], clean['sha256'])
+
+    def test_isolation_strips_git_and_nix_redirects(self):
+        env = common.clean_env(self.work/'home', self.repo, dict(
+            GIT_OBJECT_DIRECTORY='/outside', GIT_ALTERNATE_OBJECT_DIRECTORIES='/outside',
+            GIT_COMMON_DIR='/outside', GIT_CONFIG_KEY_0='k', GIT_CONFIG_VALUE_0='v',
+            GIT_CEILING_DIRECTORIES='/x', NIX_STATE_DIR='/outside', NIX_CONFIG='x',
+            NIX_PATH='nixpkgs=/outside', GIT_CONFIG_GLOBAL='/real'))
+        for key in ('GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_COMMON_DIR',
+                    'GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0','GIT_CEILING_DIRECTORIES',
+                    'NIX_STATE_DIR','NIX_CONFIG','NIX_PATH'):
+            self.assertNotIn(key, env)
+        self.assertEqual(env['GIT_CONFIG_GLOBAL'], '/dev/null')
+        self.assertEqual(env['GIT_CONFIG_NOSYSTEM'], '1')
+        self.assertNotIn('/real', env.values())
+
+    def test_non_git_target_is_rejected_before_run_state(self):
+        plain = self.root/'plain'; plain.mkdir(); (plain/'init.zsh').write_text(':\n')
+        for target in (plain, self.root/'other'):
+            with self.assertRaises(ValueError) as caught:
+                release.require_git_checkout(target)
+            self.assertIn('not a usable Git checkout', str(caught.exception))
+        subprocess.run(['git','init','-q',str(plain)],check=True)
+        subprocess.run(['git','-C',str(plain),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                        '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
+        self.assertIsNone(release.require_git_checkout(plain))
+
+    def test_tool_metadata_reports_tool_errors_instead_of_raising(self):
+        env = common.clean_env(self.work/'home', self.repo)
+        with patch.object(release.shutil, 'which', return_value=str(self.root/'missing-tool')):
+            meta = release.tool_metadata(env)
+        self.assertIn('error', meta['fzf'])
+        self.assertTrue(meta['fzf']['available'])
+
+    def test_tool_metadata_records_first_nonempty_version_line(self):
+        env = common.clean_env(self.work/'home', self.repo)
+        blank = self.root/'blank-tool'; blank.write_text('#!/bin/sh\necho\nexit 0\n'); blank.chmod(0o755)
+        good = self.root/'good-tool'; good.write_text('#!/bin/sh\necho; echo "VERSION 1"\nexit 0\n'); good.chmod(0o755)
+        with patch.object(release.shutil, 'which', return_value=str(blank)):
+            meta = release.tool_metadata(env)
+        self.assertIsNone(meta['zsh']['version'])
+        self.assertEqual(meta['zsh']['version_exit'], 0)
+        with patch.object(release.shutil, 'which', return_value=str(good)):
+            meta = release.tool_metadata(env)
+        self.assertEqual(meta['zsh']['version'], ['VERSION 1'])
+
+    def test_sighup_and_sigquit_route_to_interrupt(self):
+        saved = {number: signal.getsignal(number) for number in release.INTERRUPT_SIGNALS}
+        def restore():
+            for number, handler in saved.items():
+                signal.signal(number, handler)
+        self.addCleanup(restore)
+        self.assertIn(signal.SIGHUP, release.INTERRUPT_SIGNALS)
+        self.assertIn(signal.SIGQUIT, release.INTERRUPT_SIGNALS)
+        release.install_interrupt_handlers()
+        for number in release.INTERRUPT_SIGNALS:
+            self.assertIs(signal.getsignal(number), release.interrupt)
+            with self.assertRaises(KeyboardInterrupt):
+                release.interrupt(number, None)
+        release.ignore_interrupt_signals()
+        for number in release.INTERRUPT_SIGNALS:
+            self.assertEqual(signal.getsignal(number), signal.SIG_IGN)
+
     def test_stage_interrupt_stops_owned_group(self):
         with patch.object(release.time,'sleep',side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):

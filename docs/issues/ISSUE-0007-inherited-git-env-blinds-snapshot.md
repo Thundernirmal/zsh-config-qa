@@ -1,6 +1,6 @@
 # ISSUE-0007: snapshot()/harness_identity() are blinded by inherited GIT_DIR/GIT_WORK_TREE
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** High
 - **Category:** isolation
 - **Affected:** `release.py:25-41`, `release.py:44-51`, `release.py:254`, `release.py:321`, `release.py:329`
@@ -148,3 +148,16 @@ state.
 - Test that a mutation to the target between `before` and `after` is detected while
   `GIT_DIR` is exported.
 - Add the new test identity to `coverage.json` under `selftest`.
+
+## Fix (2026-09-12, batch 2)
+
+- **Status change:** Open → Fixed.
+- `release.git_env()` strips every inherited `GIT_*` variable; `snapshot()`
+  passes it to all three Git invocations, and `require_git_checkout()` (added
+  for ISSUE-0027) probes with the same helper, so `harness_identity()` is
+  protected through its only subprocess path (`snapshot(PROJECT)`).
+- Fault-injection test: `test_snapshot_ignores_inherited_git_env` (clean
+  reference captured outside the patch; both `GIT_DIR` and `GIT_WORK_TREE`
+  variants must match it; fails on revert).
+- Verified: review approved; full gate `20260912-205801-76cafce0` = `YES`,
+  exit 0.

@@ -61,10 +61,12 @@ def make_home(home: Path, repo: Path, rc: str | None = None) -> None:
 def clean_env(home: Path, repo: Path, base=None) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     for key in list(env):
-        if key.startswith(('FZF_', 'ZSH_UI_', 'ZSH_FZF_', 'CGM_', '_ZO_', '_ZSH_', 'QA_TEST_', 'ZSH_HTTP_')) or key in {
+        # Strip the whole Git/Nix redirect families, not just the common names:
+        # GIT_OBJECT_DIRECTORY, GIT_COMMON_DIR, GIT_CONFIG_*, NIX_STATE_DIR, etc.
+        if key.startswith(('FZF_', 'ZSH_UI_', 'ZSH_FZF_', 'CGM_', '_ZO_', '_ZSH_', 'QA_TEST_',
+                           'ZSH_HTTP_', 'GIT_', 'NIX_')) or key in {
             'NO_COLOR', 'NO_NERD_FONT', 'ZSH_GLOBAL_ALIASES', 'ZDOTDIR', 'ENV', 'BASH_ENV',
-            'NIX_PROFILES', 'NIX_PROFILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE',
-            'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'PYTHONOPTIMIZE', 'PYTHONPATH', 'PYTHONHOME',
+            'PYTHONOPTIMIZE', 'PYTHONPATH', 'PYTHONHOME',
         }:
             env.pop(key, None)
     env.update(HOME=str(home), ZDOTDIR=str(home), XDG_CONFIG_HOME=str(home / '.config'),

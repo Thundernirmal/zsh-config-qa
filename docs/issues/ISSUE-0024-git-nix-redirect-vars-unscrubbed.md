@@ -1,6 +1,6 @@
 # ISSUE-0024: Stage environment scrub leaves Git/Nix redirect variables that can move fixture writes outside the run
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** isolation
 - **Affected:** `qa_common.py:61-78` (scrub set at 64-69), `setup-fixtures.zsh:38-67`, `release.py:267`
@@ -99,3 +99,20 @@ self-test proves that exporting a redirect variable cannot move fixture writes.
   creation; assert objects exist under the run and nothing is written outside.
 - Add the test identity to `coverage.json` under `selftest` in the same change.
 - Re-run the full gate after the fix.
+
+## Fix (2026-09-12, batch 2)
+
+- **Status change:** Open → Fixed.
+- `clean_env()` now strips the whole `GIT_*` and `NIX_*` prefix families
+  (covering `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+  `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_KEY_*/VALUE_*`,
+  `NIX_STATE_DIR`, `NIX_CONFIG`, `NIX_PATH`, ...), then re-asserts
+  `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, and
+  `GIT_TERMINAL_PROMPT=0` after the strip.
+- Fault-injection test: `test_isolation_strips_git_and_nix_redirects`
+  (asserts each key removed, re-assertions present, inherited value replaced;
+  fails on revert, including ordering regressions).
+- Review note honored: scrub families deliberately rather than guessing at
+  every similarly named variable; consumers checked (Nix isolation is anchored
+  by `HOME`/`XDG_STATE_HOME`, fixtures use repo-local Git identity).
+- Verified: full gate `20260912-205801-76cafce0` = `YES`, exit 0.

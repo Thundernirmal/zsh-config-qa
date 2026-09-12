@@ -1,6 +1,6 @@
 # ISSUE-0029: SIGHUP/SIGQUIT are not trapped, so a terminal hangup skips cleanup
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** cleanup
 - **Affected:** `release.py:281-284` (handlers installed only for `SIGTERM`/`SIGINT`), `release.py:316-317` (only those two are ignored during the final phase), `README.md:63`
@@ -93,3 +93,19 @@ fallback.
   report written, exit 2). Reuse the `SIGTERM` pattern if one exists.
 - Add the new self-test identity to `coverage.json` in the same change.
 - Re-run the full gate after the change.
+
+## Fix (2026-09-12, batch 2)
+
+- **Status change:** Open → Fixed.
+- `release.INTERRUPT_SIGNALS = (SIGTERM, SIGINT, SIGHUP, SIGQUIT)`; all route
+  through `interrupt()` (KeyboardInterrupt), so a terminal hangup now runs the
+  cleanup/report path and returns `INCOMPLETE` exit 2. `ignore_interrupt_signals()`
+  replaces the two previous SIG_IGN calls during the final phase. `SIGKILL`
+  and power loss remain covered by `--cleanup`.
+- Fault-injection test: `test_sighup_and_sigquit_route_to_interrupt`
+  (asserts SIGHUP/SIGQUIT are in the tuple, that the installed handler raises
+  `KeyboardInterrupt`, and that the ignore phase takes effect; handlers saved
+  and restored via `addCleanup`).
+- README's "ordinary termination signals trigger cleanup" claim is now true;
+  no documentation drift.
+- Verified: full gate `20260912-205801-76cafce0` = `YES`, exit 0.
