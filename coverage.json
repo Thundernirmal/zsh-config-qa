@@ -139,7 +139,13 @@
     "test_gate.GateTests.test_stage_exit_zero_cannot_hide_missing_cases",
     "test_gate.GateTests.test_empty_stage_list_cannot_approve",
     "test_gate.GateTests.test_stage_interrupt_stops_owned_group",
-    "test_gate.GateTests.test_buffer_probe_reads_zle_not_prior_terminal_text"
+    "test_gate.GateTests.test_buffer_probe_reads_zle_not_prior_terminal_text",
+    "test_gate.GateTests.test_missing_coverage_key_cannot_pass",
+    "test_gate.GateTests.test_empty_coverage_list_cannot_pass",
+    "test_gate.GateTests.test_startup_exit_cannot_pass_case",
+    "test_gate.GateTests.test_non_dict_evidence_row_is_malformed",
+    "test_gate.GateTests.test_duplicate_expected_cannot_pass",
+    "test_gate.GateTests.test_failed_selftest_outcome_lands_in_stage_ledger"
   ],
   "fzf": [
     "narrow-unicode",

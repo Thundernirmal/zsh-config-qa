@@ -1,6 +1,6 @@
 # ISSUE-0001: Missing or empty coverage.json key silently disables case-inventory enforcement
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** High
 - **Category:** fail-open
 - **Affected:** `release.py:274`, `release.py:300`, `release.py:203`, `release.py:70-81`
@@ -136,3 +136,19 @@ command failed once an expected name was supplied.
 - Unit test `read_results(p, ['x','x'])` raises `ValueError`.
 - Re-run the full gate (`./run-all.zsh`) after the fix and confirm `coverage.json` keys are
   checked against `ALL_STAGES`.
+
+## Fix (2026-09-12, batch 1)
+
+- **Status change:** Open → Fixed.
+- `release.py` gained `EVIDENCE_STAGES` and `validate_coverage(coverage, selected)`
+  (fail closed when a selected evidence stage key is missing, `null`, an empty
+  list, or contains duplicate/empty/non-string names), wired into `main()`
+  immediately after `coverage.json` is parsed, before any stage runs.
+- `read_results()` now rejects an empty or duplicate expected inventory before
+  comparing rows, closing the `set()` dedup variant.
+- Fault-injection tests added: `test_missing_coverage_key_cannot_pass`,
+  `test_empty_coverage_list_cannot_pass`, `test_duplicate_expected_cannot_pass`
+  (added to `coverage.json` `selftest` in the same change).
+- Verified: review approved (no bypass left for selected evidence stages);
+  full gate `20260912-204752-2d13b992` returned `YES`, exit 0, with the new
+  selftest identities enforced by exact-set validation.

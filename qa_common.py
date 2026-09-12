@@ -118,12 +118,12 @@ def bounded(argv, *, env=None, cwd=None, timeout=120, input=None):
         raise
 
 
-def record(name, status, *, detail='', duration=0, **extra):
+def record(name, status, *, detail='', duration=0, destination=None, **extra):
     item = dict(name=name, status=status, detail=detail, duration_seconds=round(duration, 3), **extra)
-    destination = os.environ.get('QA_RESULTS_FILE')
-    if not destination:
+    resolved = destination or os.environ.get('QA_RESULTS_FILE')
+    if not resolved:
         raise RuntimeError('QA_RESULTS_FILE missing; use ./run-all.zsh')
-    with open(destination, 'a') as stream:
+    with open(resolved, 'a') as stream:
         stream.write(json.dumps(item) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
@@ -145,18 +145,25 @@ def run_case(name, code, envs='', nonempty=False):
     cases = work / 'cases'; cases.mkdir(exist_ok=True)
     script = cases / (token + '.zsh')
     startup_stderr = cases / (token + '.startup.stderr')
+    body_started = cases / (token + '.body-started')
     script.write_text(f'source {shlex.quote(str(repo / "init.zsh"))} 2>{shlex.quote(str(startup_stderr))}\n'
                       f'qa_source_rc=$?\nif (( qa_source_rc != 0 )) || [[ -s {shlex.quote(str(startup_stderr))} ]]; then\n'
                       f' command cat -- {shlex.quote(str(startup_stderr))} >&2\n exit 121\nfi\n'
+                      f': > {shlex.quote(str(body_started))}\n'
                       'setopt PIPE_FAIL\n' + code + '\n')
     start = time.monotonic()
     result = bounded(['zsh', '-d', '-f', str(script)], env=env, cwd=work / 'scratch',
                      timeout=int(os.environ.get('QA_CASE_TIMEOUT', '180')))
     (cases / (token + '.stdout')).write_text(result.stdout)
     (cases / (token + '.stderr')).write_text(result.stderr)
-    passed = result.returncode == 0 and (not nonempty or bool(result.stdout.strip()))
+    if not body_started.is_file():
+        passed = False
+        detail = 'startup exited before the case body ran (possible exit in init.zsh)'
+    else:
+        passed = result.returncode == 0 and (not nonempty or bool(result.stdout.strip()))
+        detail = '' if passed else f'exit={result.returncode}; see cases/{token}.*'
     record(name, 'pass' if passed else 'fail', duration=time.monotonic()-start,
-           detail='' if passed else f'exit={result.returncode}; see cases/{token}.*',
+           detail=detail,
            exit_code=result.returncode, evidence=f'cases/{token}')
     return 0 if passed else 1
 

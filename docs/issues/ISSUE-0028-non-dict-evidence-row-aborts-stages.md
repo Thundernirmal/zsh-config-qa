@@ -1,6 +1,6 @@
 # ISSUE-0028: A non-dict JSON evidence row raises `AttributeError` and aborts every remaining stage
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** evidence-integrity
 - **Affected:** `release.py:70-81` (`r.get('name')` / `r.get('status')` assume dict rows), `release.py:203-211` (`run_stage` catches only `ValueError`), `release.py:310-314` (blanket handler stops the stage loop)
@@ -97,3 +97,31 @@ restrict it to `ValueError` once shape validation is in place.
   following selected stage still runs.
 - Add the named self-test identities to `coverage.json` in the same change.
 - Re-run the full gate after the fix.
+
+## Fix (2026-09-12, batch 1)
+
+- **Status change:** Open → Fixed.
+- `read_results()` raises `ValueError` when any decoded row is not a JSON
+  object, and additionally when `name`/`status` are not strings (this closes
+  the adjacent `TypeError` escape found in review, e.g. a row value of
+  `["a"]`, which previously aborted `run_stage` the same way). `run_stage`
+  already catches `ValueError`, so a malformed row now fails that stage
+  locally and the remaining stages still run.
+- Fault-injection test added: `test_non_dict_evidence_row_is_malformed`
+  (covers `123`, `"x"`, `[1,2]`, non-string `name`/`status`, empty and
+  duplicate expected lists), registered in `coverage.json` in the same change.
+- Related fix discovered while testing this batch: `selftest.py`'s
+  `EvidenceResult` recorded `addSuccess` rows after test cleanups (into the
+  launcher ledger) but `addFailure`/`addError`/`addSkip` while the test's
+  environment patch was still active, so a failing self-test's row was written
+  to the test's own temp file and vanished from the stage ledger. Fixed by
+  capturing `STAGE_RESULTS_FILE` at import and passing an explicit
+  `destination` to `qa_common.record()` (new optional parameter, default
+  behavior unchanged); fault-injection test
+  `test_failed_selftest_outcome_lands_in_stage_ledger` proves the row lands in
+  the launcher ledger and nowhere else. This defect had been silently masked
+  because every recorded self-test had previously passed; the stage still
+  failed closed via inventory mismatch, so no false approval path existed.
+- Verified: review approved (regression check vs prior commit passed; all
+  previous exact-set/status validation intact); full gate
+  `20260912-204752-2d13b992` returned `YES`, exit 0 with 38 selftest rows.

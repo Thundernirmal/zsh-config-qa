@@ -1,6 +1,6 @@
 # ISSUE-0002: A target init.zsh that calls `exit 0` makes run_case pass without executing the case body
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** High
 - **Category:** fail-open
 - **Affected:** `qa_common.py:148-157`
@@ -123,3 +123,19 @@ text.
   ledger row is `fail`.
 - Keep the existing stderr and `return 7` startup tests green.
 - Add the new test identity to `coverage.json` under `selftest`.
+
+## Fix (2026-09-12, batch 1)
+
+- **Status change:** Open → Fixed.
+- `qa_common.run_case()` now writes a fresh per-case sentinel
+  (`cases/<token>.body-started`) with `: >` after the `init.zsh` startup
+  rc/stderr gate and before the case body, and the parent requires it before
+  recording `pass`. A missing sentinel fails the case with detail
+  "startup exited before the case body ran (possible exit in init.zsh)",
+  regardless of the child's exit status.
+- Fault-injection test added: `test_startup_exit_cannot_pass_case`
+  (`init.zsh` = `exit 0`, case body `false`, asserts `fail` and the detail),
+  registered in `coverage.json` in the same change.
+- Verified: review approved (sentinel is per-case, checked only after the
+  child exits, and cannot be satisfied by echoed text); full gate
+  `20260912-204752-2d13b992` returned `YES`, exit 0.

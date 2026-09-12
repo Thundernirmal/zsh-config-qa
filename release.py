@@ -67,11 +67,43 @@ def tool_metadata(env):
     return result
 
 
+EVIDENCE_STAGES = {'selftest', 'safe', 'env', 'fzf', 'pty'}
+
+
+def validate_coverage(coverage, selected):
+    """Fail closed when a selected evidence stage has no usable inventory."""
+    if not isinstance(coverage, dict):
+        raise ValueError('coverage.json must contain a JSON object')
+    problems = []
+    for stage in selected:
+        if stage not in EVIDENCE_STAGES:
+            continue
+        names = coverage.get(stage)
+        if not isinstance(names, list) or not names:
+            problems.append(f'{stage}: missing or empty inventory')
+            continue
+        if any(not isinstance(name, str) or not name for name in names):
+            problems.append(f'{stage}: inventory contains empty or non-string names')
+        if len(set(names)) != len(names):
+            problems.append(f'{stage}: duplicate required case names')
+    if problems:
+        raise ValueError('; '.join(problems))
+    return coverage
+
+
 def read_results(path, expected):
+    if not isinstance(expected, list) or not expected:
+        raise ValueError('empty expected case inventory')
+    if len(set(expected)) != len(expected):
+        raise ValueError('duplicate names in expected case inventory')
     try:
         rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     except (OSError, ValueError) as error:
         raise ValueError(f'missing or malformed case evidence: {error}') from error
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError('malformed case evidence: row is not a JSON object')
+    if any(not isinstance(r.get('name'), str) or not isinstance(r.get('status'), str) for r in rows):
+        raise ValueError('malformed case evidence: name and status must be strings')
     names = [r.get('name') for r in rows]
     if len(set(names)) != len(names) or set(names) != set(expected):
         raise ValueError(f'case inventory mismatch: missing={sorted(set(expected)-set(names))}, '
@@ -272,6 +304,10 @@ def main():
     else:
         env.pop('QA_SKIP_NETWORK', None)
     coverage = json.loads((PROJECT/'coverage.json').read_text())
+    try:
+        validate_coverage(coverage, selected)
+    except ValueError as error:
+        parser.error(f'coverage inventory invalid: {error}')
     stages = []
     interrupted = False
     report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,

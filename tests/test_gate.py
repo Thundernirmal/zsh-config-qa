@@ -193,6 +193,60 @@ class GateTests(unittest.TestCase):
     def test_empty_stage_list_cannot_approve(self):
         self.assertEqual(release.decide([],True,True,True,True)[0],'INCOMPLETE')
 
+    def test_missing_coverage_key_cannot_pass(self):
+        with self.assertRaises(ValueError):
+            release.validate_coverage({'safe': ['one'], 'env': [], 'fzf': ['x'], 'pty': ['y'], 'selftest': ['z']}, ['env'])
+        with self.assertRaises(ValueError):
+            release.validate_coverage({'safe': ['one', 'one']}, ['safe'])
+        with self.assertRaises(ValueError):
+            release.validate_coverage({}, ['safe'])
+        self.assertEqual(release.validate_coverage({'safe': ['one', 'two']}, ['safe']), {'safe': ['one', 'two']})
+
+    def test_empty_coverage_list_cannot_pass(self):
+        with self.assertRaises(ValueError):
+            release.validate_coverage({'safe': []}, ['safe'])
+        with self.assertRaises(ValueError):
+            release.validate_coverage({'safe': None}, ['safe'])
+
+    def test_startup_exit_cannot_pass_case(self):
+        (self.repo/'init.zsh').write_text('exit 0\n')
+        self.assertEqual(common.run_case('exit-startup-trap', 'false'), 1)
+        row = json.loads((self.work/'results.jsonl').read_text().splitlines()[-1])
+        self.assertEqual(row['status'], 'fail')
+        self.assertIn('before the case body', row['detail'])
+
+    def test_non_dict_evidence_row_is_malformed(self):
+        p=self.root/'r'; p.write_text('123\n')
+        with self.assertRaises(ValueError):release.read_results(p,['one'])
+        p.write_text('"x"\n[1,2]\n')
+        with self.assertRaises(ValueError):release.read_results(p,['one'])
+        p.write_text('{"name":["a"],"status":"pass"}\n{"name":"b","status":["pass"]}\n')
+        with self.assertRaises(ValueError):release.read_results(p,['a','b'])
+        with self.assertRaises(ValueError):release.read_results(p,[])
+        with self.assertRaises(ValueError):release.read_results(p,['one','one'])
+
+    def test_duplicate_expected_cannot_pass(self):
+        p=self.root/'r'; p.write_text('{"name":"one","status":"pass"}\n')
+        with self.assertRaises(ValueError):release.read_results(p,['one','one'])
+
+    def test_failed_selftest_outcome_lands_in_stage_ledger(self):
+        # unittest calls addFailure while the test's env patch is active; the
+        # evidence row must still land in the launcher-provided stage ledger.
+        import selftest as st
+        class Deliberate(unittest.TestCase):
+            def test_always_fails(self):
+                self.fail('deliberate failure for ledger routing')
+        with patch.dict(os.environ, {'QA_RESULTS_FILE': str(self.root/'bogus-other-file.jsonl')}):
+            result = unittest.TextTestRunner(resultclass=st.EvidenceResult).run(
+                unittest.TestSuite([Deliberate('test_always_fails')]))
+        self.assertEqual(len(result.failures), 1)
+        rows = [json.loads(x) for x in (self.work/'results.jsonl').read_text().splitlines()]
+        row = rows[-1]
+        self.assertTrue(row['name'].endswith('Deliberate.test_always_fails'), row['name'])
+        self.assertEqual(row['status'], 'fail')
+        self.assertIn('deliberate failure', row['detail'])
+        self.assertFalse((self.root/'bogus-other-file.jsonl').exists())
+
     def test_stage_interrupt_stops_owned_group(self):
         with patch.object(release.time,'sleep',side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
