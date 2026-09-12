@@ -188,11 +188,6 @@ class GateTests(unittest.TestCase):
             self.assertNotIn('qa-inert-secret-0123456789abcdef', message)
             self.assertIn('<redacted synthetic credential>', message)
 
-    def test_cgm_value_check_uses_a_hash_not_the_plaintext(self):
-        source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
-        self.assertIn('sha256sum', source)
-        self.assertNotRegex(source, r'== \{shlex\.quote\(secret\)\}')
-
     def test_stage_commands_run_in_the_owned_run_directory(self):
         import inspect
         source = inspect.getsource(release.run_stage)
@@ -225,8 +220,211 @@ class GateTests(unittest.TestCase):
             session.send(b'\x1b')
 
     def test_qa_pty_rejects_symlinked_scratch(self):
+        # Behavioral: qa-pty must refuse a symlinked scratch before any
+        # session starts (a bare source-string check was evadable; 0030).
+        project = Path(__file__).resolve().parents[1]
+        qarepo = self.root/'qarepo'; qarepo.mkdir(); (qarepo/'init.zsh').write_text(':\n')
+        qawork = self.root/'qawork'; qawork.mkdir()
+        victim = self.root/'victim'; victim.mkdir()
+        (qawork/'scratch').symlink_to(victim, target_is_directory=True)
+        proc = subprocess.run(
+            [sys.executable, str(project/'qa-pty.py')],
+            capture_output=True, text=True,
+            env={**os.environ, 'QA_WORK_DIR': str(qawork), 'ZSH_CONFIG_DIR': str(qarepo)})
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn('or scratch is a symlink', proc.stderr)
+        self.assertEqual(list(victim.iterdir()), [], 'victim directory must be untouched')
+
+    def test_snapshot_uses_config_neutral_git_env(self):
+        # The operator's global Git configuration (e.g. core.excludesFile)
+        # must not blind the target-clean check or the digest (0036).
+        other = self.root/'ignore-repo'; other.mkdir(); (other/'tracked.txt').write_text('x\n')
+        subprocess.run(['git','init','-q',str(other)],check=True)
+        subprocess.run(['git','-C',str(other),'add','.'],check=True)
+        subprocess.run(['git','-C',str(other),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                        '-c','commit.gpgsign=false','commit','-qm','init'],check=True)
+        (other/'untracked.tmp').write_text('x\n')
+        neutral = self.root/'home-neutral'; neutral.mkdir()
+        blinded = self.root/'home-blinded'; blinded.mkdir()
+        (blinded/'.gitconfig').write_text(
+            f'[core]\n\texcludesFile = {self.root}/global-ignore\n')
+        (self.root/'global-ignore').write_text('untracked.tmp\n')
+        baseline = release.snapshot(other)
+        self.assertTrue(baseline['dirty'])
+        for home in (neutral, blinded):
+            with patch.dict(os.environ, {'HOME': str(home), 'XDG_CONFIG_HOME': str(home/'.config')}):
+                state = release.snapshot(other)
+            self.assertTrue(state['dirty'], f'global config blinded the dirty check (HOME={home})')
+            self.assertEqual(state['sha256'], baseline['sha256'], f'digest drifted (HOME={home})')
+
+    def test_session_init_tears_down_on_post_spawn_failure(self):
+        pty=load_pty();home=self.work/'home'
+        common.make_home(home,self.repo,'PROMPT="QA> "\nbindkey -e\n')
+        with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
+            seen = []
+            def failing_register(pid):
+                seen.append(pid)
+                raise OSError('injected register_process failure')
+            with patch.object(pty, 'register_process', failing_register):
+                with self.assertRaises(OSError):
+                    pty.Session(self.work/'scratch')
+            self.assertTrue(seen, 'register_process must be reached before the failure')
+            time.sleep(0.2)
+            self.assertFalse(Path(f'/proc/{seen[0]}').exists(),
+                             f'leaked interactive zsh {seen[0]} after constructor failure')
+
+    def test_clean_env_owns_tmpdir(self):
+        expected = f'/tmp/zsh-config-qa-{os.getuid()}-tmp'
+        env = common.clean_env(self.work/'home', self.repo, dict(
+            TMPDIR='/tmp/outside-tmp', TEMP='/tmp/outside-temp', TMP='/tmp/outside-tmp2'))
+        for key in ('TMPDIR', 'TEMP', 'TMP'):
+            self.assertEqual(env[key], expected, key)
+        self.assertTrue(Path(expected).is_dir())
+        self.assertEqual(oct(Path(expected).stat().st_mode & 0o777), oct(0o700))
+        # the shared root lives outside any repository tree so git discovery
+        # from child temp dirs cannot find the harness or target checkout
+        harness = Path(__file__).resolve().parents[1]
+        self.assertNotIn(harness, Path(expected).resolve().parents)
+
+    def test_prepare_results_root_secures_created_parents(self):
+        nested = self.root/'a'/'b'/'leaf'
+        release.prepare_results_root(nested)
+        for directory in (self.root/'a', self.root/'a'/'b', nested):
+            self.assertEqual(oct(directory.stat().st_mode & 0o777), oct(0o700), str(directory))
+        # a private leaf inside a caller-owned broad parent is legitimate: the
+        # created leaf is 0700 and the existing parent is never chmodded
+        broad = self.root/'broad'; broad.mkdir(); broad.chmod(0o755)
+        release.prepare_results_root(broad/'x')
+        self.assertEqual(oct((broad/'x').stat().st_mode & 0o777), oct(0o700))
+        self.assertEqual(oct(broad.stat().st_mode & 0o777), oct(0o755))
+        unwritable = self.root/'unwritable'; unwritable.mkdir(mode=0o500)
+        with self.assertRaises(ValueError):
+            release.prepare_results_root(unwritable)
+        unwritable.chmod(0o700)
+
+    def test_evidence_stage_without_inventory_fails_loudly(self):
+        item = release.run_stage('safe', ['sh','-c','true'], self.work, dict(os.environ), 5, None)
+        self.assertEqual(item['status'], 'fail')
+        self.assertIn('missing case inventory', item['detail'])
+        ledger = self.work/'safe.jsonl'
+        ledger.write_text('{"name":"probe","status":"pass"}\n')
+        item = release.run_stage('safe', ['sh','-c','true'], self.work, dict(os.environ), 5, ['probe'])
+        self.assertEqual(item['status'], 'pass')
+
+    def test_cleanup_command_rejects_unusable_marker_repo(self):
+        def fail(message):
+            raise ValueError(message)
+        # A self-consistent marker naming a nonexistent repository must not
+        # pass (ISSUE-0044); the wrong-repo variant of 0016 becomes exercisable.
+        (self.work/common.MARKER).write_text(json.dumps(
+            {'id':'x','work':str(self.work),'repo':'/nonexistent/target'}))
+        with self.assertRaises(ValueError) as caught:
+            release.cleanup_command(self.work, fail)
+        self.assertIn('cannot clean up', str(caught.exception))
+        self.assertIn('not a usable Git checkout', str(caught.exception))
+        # a work directory inside a real repository is rejected by containment
+        nested = self.root/'nested'; nested.mkdir()
+        subprocess.run(['git','init','-q',str(nested)],check=True)
+        subprocess.run(['git','-C',str(nested),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                        '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
+        nested_run = nested/'run'; nested_run.mkdir()
+        (nested_run/common.MARKER).write_text(json.dumps(
+            {'id':'x','work':str(nested_run),'repo':str(nested)}))
+        with self.assertRaises(ValueError):
+            release.cleanup_command(nested_run, fail)
+        # a valid marker whose repo is a real checkout passes and cleans up
+        subprocess.run(['git','init','-q',str(self.repo)],check=True)
+        subprocess.run(['git','-C',str(self.repo),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                        '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
+        (self.work/common.MARKER).write_text(json.dumps(
+            {'id':'x','work':str(self.work),'repo':str(self.repo)}))
+        self.assertEqual(release.cleanup_command(self.work, fail), 0)
+
+    def test_allocation_failure_leaves_a_report_or_nothing(self):
+        # ISSUE-0027 reopen: a marker-write failure must not strand an
+        # unmarked, reportless run directory. Drives release.main() in a
+        # subprocess with the per-uid lock neutralized and a sandbox results
+        # root, injecting the failure at the marker write.
+        project = Path(__file__).resolve().parents[1]
+        repo = self.root/'env-repo'; repo.mkdir(); (repo/'init.zsh').write_text(':\n')
+        subprocess.run(['git','init','-q',str(repo)],check=True)
+        subprocess.run(['git','-C',str(repo),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                        '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
+        sandbox = self.root/'results'; sandbox.mkdir()
+        script = self.root/'drive.py'
+        script.write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(project)!r})\n"
+            "import release, qa_common\n"
+            "release.fcntl.flock = lambda *a, **k: None\n"
+            "real = release.atomic_json\n"
+            "def failing(path, value, mode=None):\n"
+            "    if str(path).endswith('.qa-owned.json'):\n"
+            "        raise OSError('injected marker-write failure')\n"
+            "    return real(path, value, mode=mode)\n"
+            "release.atomic_json = failing\n"
+            "sys.argv = ['release.py', '--repo', " + repr(str(repo)) + ",\n"
+            "            '--results-dir', " + repr(str(sandbox)) + "]\n"
+            "try:\n"
+            "    code = release.main()\n"
+            "except SystemExit as exit_error:\n"
+            "    code = exit_error.code\n"
+            "print('ENVELOPE_RC', code)\n")
+        proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                              cwd=str(project), timeout=120,
+                              env={**os.environ, 'ZSH_CONFIG_DIR': str(repo)})
+        self.assertIn('ENVELOPE_RC', proc.stdout, proc.stderr[-800:])
+        rc = int(proc.stdout.split('ENVELOPE_RC')[1].split()[0])
+        self.assertNotEqual(rc, 0, 'the allocation failure must not approve anything')
+        self.assertNotIn('Traceback', proc.stderr, 'allocation failures must not traceback')
+        self.assertEqual(list(sandbox.iterdir()), [],
+                         'no unmarked run directory or pointer may remain')
+
+    def test_snapshot_git_deadline_fails_fast(self):
+        stub = self.root/'stub'; stub.mkdir()
+        (stub/'git').write_text('#!/bin/sh\nsleep 30\n'); (stub/'git').chmod(0o755)
+        with patch.object(release, 'SNAPSHOT_TIMEOUT', 2), \
+                patch.dict(os.environ, {'PATH': str(stub) + os.pathsep + os.environ['PATH']}):
+            start = time.monotonic()
+            with self.assertRaises(RuntimeError) as caught:
+                release.snapshot(self.root/'plain' if (self.root/'plain').exists() else self.work)
+            elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 20, 'snapshot must honor its per-command deadline')
+        self.assertIn('timed out', str(caught.exception))
+
+    def test_fixture_git_steps_are_bounded(self):
+        project = Path(__file__).resolve().parents[1]
+        stub = self.root/'gitstub'; stub.mkdir()
+        (stub/'git').write_text('#!/bin/sh\nsleep 30\n'); (stub/'git').chmod(0o755)
+        fxwork = self.root/'fxwork'; fxwork.mkdir()
+        (fxwork/'scratch').mkdir()
+        common.atomic_json(fxwork/common.MARKER, dict(id='fx', work=str(fxwork), repo=str(self.repo)))
+        start = time.monotonic()
+        proc = subprocess.run(
+            ['zsh', str(project/'setup-fixtures.zsh')],
+            capture_output=True, text=True, cwd=str(fxwork),
+            env={**os.environ, 'QA_WORK_DIR': str(fxwork), 'ZSH_CONFIG_DIR': str(self.repo),
+                 'QA_FIXTURE_TIMEOUT': '2', 'PATH': str(stub) + os.pathsep + os.environ['PATH']})
+        elapsed = time.monotonic() - start
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertLess(elapsed, 15, 'fixture git step must honor its deadline')
+        self.assertIn('fixture step', proc.stderr)
+        self.assertIn('deadline', proc.stderr)
+
+    def test_cgm_value_check_uses_a_hash_not_the_plaintext(self):
+        import ast
         source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
-        self.assertIn('SCRATCH.is_symlink()', source)
+        self.assertIn('sha256sum', source)
+        tree = ast.parse(source)
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'cgm_roundtrip')
+        check_args = [ast.unparse(node.args[0]) for node in ast.walk(fn)
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                      and node.func.attr == 'check']
+        self.assertTrue(check_args, 'cgm_roundtrip must run checks')
+        for argument in check_args:
+            if 'secret' in argument:
+                self.assertIn('sha256sum', argument,
+                              f'check body embeds the secret outside the hash comparison: {argument}')
 
     def test_run_case_rejects_unsafe_scratch(self):
         scratch = self.work/'scratch'
@@ -239,8 +437,8 @@ class GateTests(unittest.TestCase):
     def test_snapshot_git_calls_are_bounded(self):
         import inspect
         source = inspect.getsource(release.snapshot)
-        self.assertIn('bounded([\'git\'', source)
-        self.assertIn('timeout=60', source)
+        self.assertIn("bounded(['git'", source)
+        self.assertIn('timeout=SNAPSHOT_TIMEOUT', source)
 
     def test_coverage_is_parsed_and_validated_once_before_run_state(self):
         import inspect
@@ -312,7 +510,14 @@ class GateTests(unittest.TestCase):
     def test_cleanup_accepts_uncaptured_start_identity(self):
         # A leader registered after it exited records `start: null`; that is a
         # known state, not a malformed entry, and must not produce a false NO.
-        (self.work/'processes.jsonl').write_text('{"pid": 12345, "start": null}\n')
+        # Choose a provably dead pid that also owns no live process group.
+        dead = None
+        for candidate in range(500, 4000):
+            if not Path(f'/proc/{candidate}').exists() and not release.group_members(candidate):
+                dead = candidate
+                break
+        self.assertIsNotNone(dead, 'no dead pid without a live group found')
+        (self.work/'processes.jsonl').write_text(json.dumps({'pid': dead, 'start': None})+'\n')
         self.assertEqual(release.cleanup(self.work), [])
 
     def test_cleanup_reports_unverified_leaderless_group(self):
@@ -473,15 +678,19 @@ class GateTests(unittest.TestCase):
         self.assertNotIn('/real', env.values())
 
     def test_non_git_target_is_rejected_before_run_state(self):
-        plain = self.root/'plain'; plain.mkdir(); (plain/'init.zsh').write_text(':\n')
-        for target in (plain, self.root/'other'):
-            with self.assertRaises(ValueError) as caught:
-                release.require_git_checkout(target)
-            self.assertIn('not a usable Git checkout', str(caught.exception))
-        subprocess.run(['git','init','-q',str(plain)],check=True)
-        subprocess.run(['git','-C',str(plain),'-c','user.name=QA','-c','user.email=qa@example.invalid',
-                        '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
-        self.assertIsNone(release.require_git_checkout(plain))
+        # Ceiling discovery at the sandbox root: the stage TMPDIR can legally
+        # sit inside the harness repository, which would otherwise be
+        # discovered as the enclosing checkout.
+        with patch.object(release, 'git_env', lambda: {'GIT_CEILING_DIRECTORIES': str(self.root)}):
+            plain = self.root/'plain'; plain.mkdir(); (plain/'init.zsh').write_text(':\n')
+            for target in (plain, self.root/'other'):
+                with self.assertRaises(ValueError) as caught:
+                    release.require_git_checkout(target)
+                self.assertIn('not a usable Git checkout', str(caught.exception))
+            subprocess.run(['git','init','-q',str(plain)],check=True)
+            subprocess.run(['git','-C',str(plain),'-c','user.name=QA','-c','user.email=qa@example.invalid',
+                            '-c','commit.gpgsign=false','commit','-qm','x','--allow-empty'],check=True)
+            self.assertIsNone(release.require_git_checkout(plain))
 
     def test_tool_metadata_reports_tool_errors_instead_of_raising(self):
         env = common.clean_env(self.work/'home', self.repo)

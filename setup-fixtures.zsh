@@ -18,6 +18,18 @@ command rm -rf -- "$scratch"
 command mkdir -p -- "$scratch"/nav/sub/deep "$scratch"/files
 cd -- "$scratch" || exit 1
 
+# Bounded fixture step: every external command that can block gets a deadline
+# (ISSUE-0043). GNU coreutils `timeout` is a platform dependency (AGENTS.md).
+typeset -gi fixture_timeout=${QA_FIXTURE_TIMEOUT:-60}
+fgit() {
+  local step=$1
+  shift
+  if ! command timeout "$fixture_timeout" "$@"; then
+    print -u2 -r -- "fatal: fixture step '${step}' failed or exceeded its ${fixture_timeout}s deadline"
+    exit 2
+  fi
+}
+
 # --- files -------------------------------------------------------------
 print -r -- 'hello TODO world' > files/a.txt
 print -r -- 'second line' >> files/a.txt
@@ -35,35 +47,35 @@ fi
 command python3 -c 'import zipfile; zipfile.ZipFile("files/sample.zip", "w").write("files/z.txt", "z.txt")'
 
 # --- git repository ----------------------------------------------------
-command git init -q gitrepo
+fgit 'fixture git step 1' git init -q gitrepo
 cd -- gitrepo || exit 1
-command git config user.email qa@example.com
-command git config user.name QA
+fgit 'fixture git step 2' git config user.email qa@example.com
+fgit 'fixture git step 3' git config user.name QA
 print -r -- 'one' > f.txt
-command git add f.txt
-command git commit -qm first
+fgit 'fixture git step 4' git add f.txt
+fgit 'fixture git step 5' git commit -qm first
 print -r -- 'two' >> f.txt
-command git commit -qam second
+fgit 'fixture git step 6' git commit -qam second
 cd -- .. || exit 1
 
 # --- pull-with-rebase fixture ------------------------------------------
 # gpr-clone is created before the upstream commit, so it is behind origin.
-command git init -q --bare gpr-origin.git
-command git clone -q gpr-origin.git gpr-seed
+fgit 'fixture git step 7' git init -q --bare gpr-origin.git
+fgit 'fixture git step 8' git clone -q gpr-origin.git gpr-seed
 cd -- gpr-seed || exit 1
-command git config user.email qa@example.com
-command git config user.name QA
+fgit 'fixture git step 9' git config user.email qa@example.com
+fgit 'fixture git step 10' git config user.name QA
 print -r -- 'base' > base.txt
-command git add base.txt
-command git commit -qm base
-command git push -q origin HEAD
+fgit 'fixture git step 11' git add base.txt
+fgit 'fixture git step 12' git commit -qm base
+fgit 'fixture git step 13' git push -q origin HEAD
 cd -- .. || exit 1
-command git clone -q gpr-origin.git gpr-clone
+fgit 'fixture git step 14' git clone -q gpr-origin.git gpr-clone
 cd -- gpr-seed || exit 1
 print -r -- 'upstream' > upstream-only.txt
-command git add upstream-only.txt
-command git commit -qm upstream
-command git push -q origin HEAD
+fgit 'fixture git step 15' git add upstream-only.txt
+fgit 'fixture git step 16' git commit -qm upstream
+fgit 'fixture git step 17' git push -q origin HEAD
 cd -- .. || exit 1
 
 # --- zoxide seed -------------------------------------------------------

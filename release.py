@@ -23,8 +23,15 @@ ALL_STAGES = ['selftest', 'regression', 'fixtures', 'safe', 'env', 'fzf', 'pty']
 
 
 def git_env():
-    """Runner-side Git environment: repository discovery cannot be redirected."""
-    return {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    """Runner-side Git environment: discovery cannot be redirected and the
+    operator's global/system Git configuration cannot blind the fingerprint."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    # Same baseline as the stage environments (qa_common.clean_env): the
+    # target-clean check and the digests must depend only on repository
+    # content and the repository's own ignore files.
+    env['GIT_CONFIG_GLOBAL'] = '/dev/null'
+    env['GIT_CONFIG_NOSYSTEM'] = '1'
+    return env
 
 
 def require_git_checkout(repo):
@@ -39,10 +46,14 @@ def require_git_checkout(repo):
                          f'{probe.stderr.strip() or f"git exit {probe.returncode}"}')
 
 
+SNAPSHOT_TIMEOUT = 60
+
+
 def snapshot(repo):
     def git(*args):
         try:
-            p = bounded(['git', '-C', str(repo), *args], env=git_env(), timeout=60, text=False)
+            p = bounded(['git', '-C', str(repo), *args], env=git_env(),
+                        timeout=SNAPSHOT_TIMEOUT, text=False)
         except OSError as error:
             raise RuntimeError(f'git {" ".join(args)} failed: {error}') from error
         if p.returncode != 0:
@@ -283,6 +294,15 @@ def cleanup(work):
 
 
 def run_stage(name, argv, work, env, timeout, expected=None):
+    stage = name if name in EVIDENCE_STAGES else name.rsplit('-', 1)[0]
+    if expected is None and stage in EVIDENCE_STAGES:
+        # A validated inventory exists for every evidence stage; passing None
+        # here silently disables enforcement, so fail the stage loudly
+        # instead (ISSUE-0001 point-of-use guard).
+        item = dict(name=name, status='fail',
+                    detail=f'missing case inventory for evidence stage {stage}', seconds=0)
+        print(f'FAIL       {name}: {item["detail"]}', flush=True)
+        return item
     log = work / f'{name}.log'
     results = work / f'{name}.jsonl'
     stage_env = dict(env, QA_RESULTS_FILE=str(results))
@@ -341,16 +361,45 @@ def run_stage(name, argv, work, env, timeout, expected=None):
 
 def prepare_results_root(root: Path) -> None:
     """Create (or validate) a private results root; never broaden an existing one."""
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root = Path(root)
+    # Create the missing chain explicitly with 0700: mkdir(parents=True) would
+    # leave intermediate directories at the umask default.
+    missing = []
+    probe = root
+    while not probe.exists() and probe != probe.parent:
+        missing.append(probe)
+        probe = probe.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
     if root.stat().st_mode & 0o077:
         raise ValueError(f'results root {root} must be private to the user (chmod 700)')
+    if not os.access(root, os.R_OK | os.W_OK | os.X_OK):
+        raise ValueError(f'results root {root} is not writable by the current user')
 
 
 def validate_cleanup_target(work: Path) -> dict:
-    """Parse and verify an owned run marker for --cleanup; raise for unusable paths."""
+    """Parse and verify an owned run marker for --cleanup; raise for unusable paths.
+
+    The recorded repository must itself be a usable Git checkout: a
+    self-consistent marker naming a nonexistent repository must not pass the
+    containment checks (ISSUE-0044).
+    """
     marker = json.loads((work/MARKER).read_text())
-    verify_work(work, Path(marker['repo']))
+    repo = Path(marker['repo'])
+    require_git_checkout(repo)
+    verify_work(work, repo)
     return marker
+
+
+def cleanup_command(work: Path, fail) -> int:
+    """`--cleanup` branch logic; `fail(message)` must abort (parser.error in main)."""
+    try:
+        validate_cleanup_target(work)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        fail(f'cannot clean up {work}: {error}')
+    errors = cleanup(work)
+    print('\n'.join(errors) if errors else 'Cleanup verified.')
+    return 1 if errors else 0
 
 
 def main():
@@ -376,13 +425,7 @@ def main():
     os.environ.pop('QA_WORK_DIR', None)
     if args.cleanup:
         work = args.cleanup.absolute()
-        try:
-            validate_cleanup_target(work)
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            parser.error(f'cannot clean up {work}: {error}')
-        errors = cleanup(work)
-        print('\n'.join(errors) if errors else 'Cleanup verified.')
-        return 1 if errors else 0
+        return cleanup_command(work, parser.error)
     if args.repeat < 1 or args.stage_timeout < 1:
         parser.error('repeat and timeout must be positive')
     repo = args.repo.resolve()
@@ -398,7 +441,10 @@ def main():
     if set(selected) & {'safe','env','pty'} and 'fixtures' not in selected:
         selected = ['fixtures', *selected]
     selected = [s for s in ALL_STAGES if s in selected]
-    coverage = load_validated_coverage(PROJECT/'coverage.json', selected)
+    try:
+        coverage = load_validated_coverage(PROJECT/'coverage.json', selected)
+    except (OSError, ValueError) as error:
+        parser.error(f'coverage inventory invalid: {error}')
     try:
         before = snapshot(repo)
     except (OSError, RuntimeError) as error:
@@ -415,14 +461,9 @@ def main():
         parser.error(str(error))
     ident = uuid.uuid4().hex
     work = root / (time.strftime('%Y%m%d-%H%M%S')+'-'+ident[:8])
-    work.mkdir(mode=0o700)
-    atomic_json(work/MARKER, dict(id=ident, work=str(work), repo=str(repo)))
-    os.environ['QA_WORK_DIR'] = str(work)
     stages = []
     interrupted = False
-    report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,
-                  harness=None, machine=platform.platform(), tools={},
-                  repeat=args.repeat, stages=stages, cleanup_errors=[])
+    report = None
     commands = {
         'selftest': [sys.executable, str(PROJECT/'selftest.py')],
         'regression': ['zsh', str(repo/'scripts/run-tests.zsh')],
@@ -432,8 +473,17 @@ def main():
         'fzf': [sys.executable, str(repo/'scripts/test-fzf-pty.py')],
         'pty': [sys.executable, str(PROJECT/'qa-pty.py')],
     }
-    print(f'Target: {repo} @ {before["commit"]}\nEvidence: {work}', flush=True)
     try:
+        # The whole allocation envelope is inside the report handling: any
+        # failure here still produces a report (or removes an unmarked
+        # allocation) and runs cleanup.
+        work.mkdir(mode=0o700)
+        atomic_json(work/MARKER, dict(id=ident, work=str(work), repo=str(repo)))
+        os.environ['QA_WORK_DIR'] = str(work)
+        report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,
+                      harness=None, machine=platform.platform(), tools={},
+                      repeat=args.repeat, stages=stages, cleanup_errors=[])
+        print(f'Target: {repo} @ {before["commit"]}\nEvidence: {work}', flush=True)
         install_interrupt_handlers()
         verify_work(work, repo)
         try:
@@ -450,7 +500,6 @@ def main():
             env.pop('QA_SKIP_NETWORK', None)
         report['tools'] = tool_metadata(env)
         atomic_json(work/'report.json', report)
-        install_interrupt_handlers()
         for name in selected:
             count = args.repeat if name == 'pty' else 1
             for iteration in range(count):
@@ -472,7 +521,13 @@ def main():
         stages.append(dict(name='runner', status='fail', detail=str(error)))
     finally:
         ignore_interrupt_signals()
-        errors = cleanup(work)
+        if report is None:
+            # The allocation itself failed before the report existed.
+            report = dict(schema=1, verdict='INCOMPLETE', repo=str(repo), target=before,
+                          harness={'error': 'before: not captured'},
+                          machine=platform.platform(), tools={},
+                          repeat=args.repeat, stages=stages, cleanup_errors=[])
+        errors = cleanup(work) if work.is_dir() else []
         report['cleanup_errors'] = errors
         try:
             after = snapshot(repo)
@@ -491,18 +546,28 @@ def main():
             verdict, rc = 'NO', 1
             report['harness_changed'] = True
         report.update(verdict=verdict, full_coverage=full, target_unchanged=unchanged)
-        atomic_json(work/'report.json', report)
-        lines = [f'# Release verdict: {verdict}', '', f'Target: `{before["commit"]}`', '',
-                 '| Stage | Result | Evidence |', '|---|---|---|']
-        for stage in stages:
-            lines.append(f'| {stage["name"]} | {stage["status"]} | [{stage.get("log", "details")}]({stage.get("log", "report.json")}) |')
-        lines += ['', 'YES requires a clean, unchanged target, all required cases, no skips, and verified cleanup.',
-                  'Scope: local GNU/Linux and installed tools. System-wide package mutations and human font/contrast judgment are excluded.',
-                  '', 'Cleanup: '+ ('; '.join(errors) if errors else 'verified'), '',
-                  'See report.json for case-level evidence, target fingerprint, harness revision, and exact failures.']
-        (work/'report.md').write_text('\n'.join(lines)+'\n')
-        atomic_json(root/'latest.json', {'run':str(work),'verdict':verdict}, mode=0o600)
-        print(f'\nRELEASE: {verdict}\nReport: {work / "report.md"}', flush=True)
+        try:
+            atomic_json(work/'report.json', report)
+            lines = [f'# Release verdict: {verdict}', '', f'Target: `{before["commit"]}`', '',
+                     '| Stage | Result | Evidence |', '|---|---|---|']
+            for stage in stages:
+                lines.append(f'| {stage["name"]} | {stage["status"]} | [{stage.get("log", "details")}]({stage.get("log", "report.json")}) |')
+            lines += ['', 'YES requires a clean, unchanged target, all required cases, no skips, and verified cleanup.',
+                      'Scope: local GNU/Linux and installed tools. System-wide package mutations and human font/contrast judgment are excluded.',
+                      '', 'Cleanup: '+ ('; '.join(errors) if errors else 'verified'), '',
+                      'See report.json for case-level evidence, target fingerprint, harness revision, and exact failures.']
+            (work/'report.md').write_text('\n'.join(lines)+'\n')
+            if (work/MARKER).exists():
+                # Never point at a run that is about to be removed as unmarked.
+                atomic_json(root/'latest.json', {'run':str(work),'verdict':verdict}, mode=0o600)
+            print(f'\nRELEASE: {verdict}\nReport: {work / "report.md"}', flush=True)
+        except OSError as report_error:
+            print(f'fatal: could not write the run report: {report_error}', file=sys.stderr)
+            rc = 1
+        if work.is_dir() and not (work/MARKER).exists():
+            # A half-allocated, unmarked directory cannot be recovered through
+            # --cleanup; remove it instead of stranding it (ISSUE-0027).
+            shutil.rmtree(work, ignore_errors=True)
     return rc
 
 if __name__ == '__main__':

@@ -113,3 +113,47 @@ if not SCRATCH.is_dir() or SCRATCH.is_symlink():
   guard assertion, consistent with the other static path guards); registered
   in `coverage.json` under `selftest`.
 - Verified: full gate `20260912-221929-051791ee` = `YES`, exit 0.
+
+## Reopen (2026-09-12, third independent verification)
+
+- **Status change:** Fixed → Open (runtime guard fixed; the required
+  fault-injection test is unsound).
+- The guard itself is verified by execution: with a symlinked or missing
+  `work/scratch`, `qa-pty.py` exits 2 with the fatal message from
+  `qa-pty.py:1040-1043` (`... (or scratch is a symlink); run
+  ./setup-fixtures.zsh first`) before `verify_work`, `ensure_isolated_home`,
+  or any session; the victim directory is untouched and no `nixhome`/results
+  file is created. A real scratch directory still runs the `startup` scenario
+  (`/tmp/opencode/verify-0030`).
+- The delivered test `test_qa_pty_rejects_symlinked_scratch`
+  (`tests/test_gate.py:227-229`, `coverage.json:167`) is a bare source-string
+  assertion (`assertIn('SCRATCH.is_symlink()', source)`), while this issue's
+  Test plan explicitly required "a unit test ... that creates a temporary run
+  directory with a symlinked `scratch` and asserts `qa-pty.py` exits with
+  status 2 and the fatal symlink message".
+- Independent revert proof: changing the runtime condition to
+  `(SCRATCH.is_symlink() and False) or not SCRATCH.is_dir()` keeps the test
+  green while the real behavior regresses (exit 0; the `startup` scenario runs
+  inside the external directory); replacing the condition with a comment that
+  contains the string also passes. Only a literal line deletion is caught.
+- **Required remediation:** replace the source assertion with the behavioral
+  subprocess test (sandbox run directory + `.qa-owned.json` + symlinked
+  `scratch`; assert exit 2, the fatal message, and an untouched victim), keep
+  the same `coverage.json` identity, and re-run `selftest` plus `pty`.
+- Secondary observation (not itself a containment breach): the guard lives
+  only at `main()` entry; scenario callables and `tests/test_gate.py` helpers
+  that invoke scenarios directly do not revalidate `SCRATCH`.
+
+## Re-fix (2026-09-12, batch 8)
+
+- **Status change:** Open → Fixed.
+- The delivered test is now the behavioral subprocess test this issue's test
+  plan required: a sandbox run directory with a symlinked `scratch`, driving
+  `python3 qa-pty.py` with the sandbox `QA_WORK_DIR`/`ZSH_CONFIG_DIR`; asserts
+  exit 2, the fatal symlink message, and an untouched victim directory. The
+  evadable source-string assertion is gone.
+- The secondary observation (scenarios invoked directly do not revalidate
+  `SCRATCH`) is accepted as-is: scenario callables are internal entry points
+  that the launcher and the gate always reach through `main()`, which
+  validates once at startup.
+- Verified: full gate `20260912-235724-019e9c8b` (`YES`, exit 0).

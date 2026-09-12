@@ -129,9 +129,9 @@ qa 'extract tar.gz' 'rm -rf out && mkdir out && extract --destination out files/
 qa_fixture 'extract zip' files/sample.zip \
   'rm -rf out-zip && mkdir out-zip && extract --destination out-zip files/sample.zip && [[ -f out-zip/z.txt ]]' unzip
 qa_fixture 'extract tar.xz' files/sample.tar.xz \
-  'rm -rf out-xz && mkdir out-xz && extract --destination out-xz files/sample.tar.xz && [[ -f out-xz/archive-src.txt ]]'
+  'rm -rf out-xz && mkdir out-xz && extract --destination out-xz files/sample.tar.xz && [[ -f out-xz/archive-src.txt ]]' xz
 qa_fixture 'extract tar.bz2' files/sample.tar.bz2 \
-  'rm -rf out-bz && mkdir out-bz && extract --destination out-bz files/sample.tar.bz2 && [[ -f out-bz/archive-src.txt ]]'
+  'rm -rf out-bz && mkdir out-bz && extract --destination out-bz files/sample.tar.bz2 && [[ -f out-bz/archive-src.txt ]]' bzip2
 qa_fixture 'extract --keep' files/sample.tar.gz \
   'rm -rf out-keep && mkdir out-keep && extract --keep --destination out-keep files/sample.tar.gz && [[ -f files/sample.tar.gz && -f out-keep/archive-src.txt ]]'
 qa 'grep match'     'grep TODO files/a.txt >/dev/null'
@@ -189,7 +189,16 @@ qa 'ztheme use/reset'  'ztheme use nord >/dev/null && ztheme reset >/dev/null'
 qa 'ztheme invalid'    'ztheme use invalid-theme >/dev/null 2>&1; (( $? != 0 ))'
 
 print -r -- '== Packages (read-only) =='
-qa_nz 'upkg managers'      'upkg managers'
+# A host with no supported package manager is target-expected behavior
+# ("No supported package managers detected."); record a skip, not a failure.
+typeset managers_err=$work_dir/probe-managers.err
+{ zsh -d -f -c "source ${(q)repo_dir}/init.zsh; upkg managers" } 2> "$managers_err" > /dev/null
+if command grep -q 'No supported package managers detected' "$managers_err"; then
+  qa_skip 'upkg managers' 'no supported package managers'
+else
+  qa_nz 'upkg managers' 'upkg managers'
+fi
+command rm -f -- "$managers_err"
 qa_opt 'npkg help' nix      'npkg help'
 qa_opt 'npkg list (empty ok)' nix 'npkg list'
 qa_opt 'upkg search pacman' pacman 'upkg search ripgrep --only=pacman'

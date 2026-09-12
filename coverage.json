@@ -168,7 +168,16 @@
     "test_gate.GateTests.test_run_case_rejects_unsafe_scratch",
     "test_gate.GateTests.test_snapshot_git_calls_are_bounded",
     "test_gate.GateTests.test_coverage_is_parsed_and_validated_once_before_run_state",
-    "test_gate.GateTests.test_cleanup_accepts_uncaptured_start_identity"
+    "test_gate.GateTests.test_cleanup_accepts_uncaptured_start_identity",
+    "test_gate.GateTests.test_snapshot_uses_config_neutral_git_env",
+    "test_gate.GateTests.test_session_init_tears_down_on_post_spawn_failure",
+    "test_gate.GateTests.test_clean_env_owns_tmpdir",
+    "test_gate.GateTests.test_prepare_results_root_secures_created_parents",
+    "test_gate.GateTests.test_evidence_stage_without_inventory_fails_loudly",
+    "test_gate.GateTests.test_cleanup_command_rejects_unusable_marker_repo",
+    "test_gate.GateTests.test_snapshot_git_deadline_fails_fast",
+    "test_gate.GateTests.test_fixture_git_steps_are_bounded",
+    "test_gate.GateTests.test_allocation_failure_leaves_a_report_or_nothing"
   ],
   "fzf": [
     "narrow-unicode",

@@ -78,10 +78,17 @@ def clean_env(home: Path, repo: Path, base=None) -> dict[str, str]:
             'PYTHONOPTIMIZE', 'PYTHONPATH', 'PYTHONHOME',
         }:
             env.pop(key, None)
+    # Point the temporary-directory family at a private, run-family-owned root
+    # OUTSIDE any repository tree: tools (tar, fzf, target functions) cannot
+    # drop files in the operator's /tmp, and git parent-discovery from temp
+    # dirs cannot find the harness or target checkout (ISSUE-0038).
+    tmpdir = Path('/tmp') / f'zsh-config-qa-{os.getuid()}-tmp'
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
     env.update(HOME=str(home), ZDOTDIR=str(home), XDG_CONFIG_HOME=str(home / '.config'),
                XDG_CACHE_HOME=str(home / '.cache'), XDG_DATA_HOME=str(home / '.local/share'),
                XDG_STATE_HOME=str(home / '.local/state'), TERM='xterm-256color',
                COLORTERM='truecolor', LANG='C.UTF-8', LC_ALL='C.UTF-8',
+               TMPDIR=str(tmpdir), TEMP=str(tmpdir), TMP=str(tmpdir),
                ZSH_CONFIG_DIR=str(repo.resolve()), GIT_CONFIG_GLOBAL='/dev/null',
                GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0', PYTHONUNBUFFERED='1',
                PYTHONDONTWRITEBYTECODE='1')

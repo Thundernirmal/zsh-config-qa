@@ -185,3 +185,71 @@ in `report.json`.
      taken, before `require_git_checkout` and any `bounded()` call, so no probe
      can register into a foreign run's ledger or misreport a usable checkout.
 - Verified: full gate `20260912-223424-da8ad654` = `YES`, exit 0.
+
+## Reopen (2026-09-12, third independent verification)
+
+- **Status change:** Fixed → Open (narrow envelope residues).
+- Re-verified at harness HEAD `7aafe90` (clean tree). Closed and confirmed:
+  non-git/empty/no-commit targets fail before run state with `parser.error`
+  (exit 2, no traceback); unreadable tracked files now surface through
+  `parser.error`; a stale inherited `QA_WORK_DIR` is popped before
+  `require_git_checkout`; an in-try `make_home` failure produces a `NO` report
+  with `cleanup_errors=[]` and a successful `--cleanup`.
+- The second-opinion requirement — post-allocation failures always produce an
+  `INCOMPLETE` report and cleanup — is still not met for the allocation
+  envelope that runs before `try:` at `release.py:436`:
+  1. **A marker-write failure strands an unidentified, unrecoverable run
+     directory.** `work.mkdir(mode=0o700)` (`release.py:418`),
+     `atomic_json(work/MARKER, ...)` (`release.py:419`), and the report-dict
+     initialization (`release.py:423`) precede the `try`. In a sandbox copy
+     with the real lock path (`/tmp/opencode/verify-0027`), an injected
+     `atomic_json` failure produced a raw `OSError` traceback at
+     `release.py:419` and left `.runs/<run>` (mode 0700) with no marker and no
+     report; `./run-all.zsh --cleanup <dir>` then refuses with
+     `cannot clean up ...: [Errno 2] No such file or directory:
+     '.../.qa-owned.json'` (`release.py:349-353`). Only manual `rmdir`
+     recovers it.
+  2. **A results root that exists but is not writable passes validation and
+     then traces back.** `prepare_results_root()` (`release.py:342-346`)
+     checks only mode bits; a mode-0500 root passes, then `work.mkdir`
+     (`release.py:418`) raises an uncaught `PermissionError` — raw traceback,
+     exit 1, no report.
+  3. **Unreadable/missing/malformed `coverage.json` still traces back.**
+     `load_validated_coverage(...)` at `release.py:401` is outside every
+     handler, so a missing or unreadable inventory produces a raw `ValueError`
+     traceback and exit 1 rather than the documented setup-error path. The
+     ISSUE-0001 re-fix text calls this "the documented `ValueError`/exit-2
+     path"; the exit-2 conversion is not present in the tree.
+- The test plan ("Add named self-test identities to `coverage.json` in the same
+  change") remains unmet for the envelope: no test calls `release.main()` or
+  injects an allocation-time failure; the existing tests cover only the
+  pre-allocation target checks and `tool_metadata`.
+- **Required remediation:** put `work.mkdir`/marker/report initialization inside
+  the report envelope (or clean up and identify a reportless allocation),
+  pre-check results-root writability, convert inventory-load failures to
+  `parser.error`, and add a fault-injection test that injects a marker-write
+  failure and asserts either a report exists or no unmarked allocation remains.
+
+## Re-fix (2026-09-12, batch 8)
+
+- **Status change:** Open → Fixed.
+- All three residues closed:
+  1. The whole allocation envelope (`work.mkdir`, marker write, `QA_WORK_DIR`,
+     report initialization, the banner print, signal handlers, `verify_work`,
+     harness capture, `make_home`, `clean_env`, `tool_metadata`, and the
+     initial report write) now runs inside the report `try`. The report dict
+     is pre-initialized and the `finally` always runs cleanup and finalizes:
+     a marker-write failure yields a `NO` report and the unmarked allocation
+     is removed (`shutil.rmtree` only when the marker never landed; a pointer
+     is never written for a removed run). Fault-injection test:
+     `test_allocation_failure_leaves_a_report_or_nothing` drives `release.main()`
+     in a subprocess with the lock neutralized and a sandbox results root,
+     injecting the failure at the marker write (verified in review's sandbox
+     and by the delivered test).
+  2. `prepare_results_root()` rejects a root the user cannot write via
+     `os.access`, so the mode-0500 root now fails with `parser.error` (exit 2)
+     before any allocation.
+  3. `coverage.json` load failures convert to `parser.error` (exit 2, no
+     traceback).
+- Verified: full gate `20260912-235724-019e9c8b` (`YES`, exit 0); review sandbox verified all three residues plus
+  the injected marker failure path end to end.

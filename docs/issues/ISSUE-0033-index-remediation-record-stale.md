@@ -118,3 +118,46 @@ counts consistent with the individual issue files at all times.
   table row against the linked file's metadata (zero mismatches) and every
   cited run against `.runs/` (all present with the stated verdicts).
 - No executable harness change; no `coverage.json` change.
+
+## Reopen (2026-09-12, third independent verification)
+
+- **Status change:** Fixed → Open. The reconciliation commit `7aafe90` that
+  closed this issue changed only `docs/issues/README.md:34` (status count
+  `Fixed (35)` → `Fixed (32)`) plus issue files; the false "all 26 open issues
+  fixed in five reviewed batches (`ef8f429`, `6953be1`, `2ea2d8b`, `e898a90`,
+  `1a66d03`)" sentence at `docs/issues/README.md:11` is untouched and directly
+  contradicts the index's own remediation table (`:18-25`), where batches 1–5
+  cover 24 issues and ISSUE-0008/ISSUE-0014 are fixed by batch 6 (`5a02c67`).
+  That sentence was this issue's first Affected line and Proposed-fix item 1.
+- Verified correct during the same pass: all 35 table rows match their issue
+  files' `Status:` (zero mismatches); all seven cited gate runs exist in
+  `.runs/` and report `YES` with the stated counts; safe/env/fzf/selftest/pty
+  counts match `coverage.json`; the next free ID is `0036`.
+- Remaining stale prose in the index (all index line numbers in this section are
+  as of harness `7aafe90`; this third pass later appended the pass summary and
+  nine table rows, shifting lines after the table by ten): `:13` "Final
+  statuses: 22 Fixed, 3 Refuted, 10 Open" (superseded), `:105-106` "Open
+  distribution after the second-opinion audit … 22 Fixed and 3 Refuted"
+  (historical but unlabeled), `:143`/`:179` "32 identities" against the current
+  61 selftest identities, and `:25` "this commit" now resolving to the docs-only
+  `7aafe90` instead of the gated executable commit `3bd8430`.
+- **Required remediation:** apply the issue's Proposed fix — replace the
+  five-batch sentence with the seven-batch record already in the table, label
+  the historical snapshots as historical, refresh the selftest counts, and
+  name the gated commit — then re-run the scripted table/file cross-check.
+
+## Re-fix (2026-09-12, batch 8)
+
+- **Status change:** Open → Fixed.
+- The stale five-batch sentence now points to the complete batch/gate record
+  table; the historical status snapshots ("Re-audit result", the
+  second-opinion distribution line) are labeled as historical/superseded; the
+  "32 identities" prose now describes the count as cross-checked per batch;
+  the batch-7 row names its gated commit (`3bd8430`) instead of "this
+  commit"; the third-verification paragraph's "no new YES is claimed"
+  statement was corrected (batch 8 made executable changes and holds its own
+  gate); rows 0036-0044 were reconciled (removing stale Open duplicates) and
+  the status summary counts were regenerated.
+- The scripted table/file cross-check plus cited-run verification was re-run
+  over the final table (44 rows; zero mismatches; all cited runs present).
+- Verified: full gate `20260912-235724-019e9c8b` (`YES`, exit 0).

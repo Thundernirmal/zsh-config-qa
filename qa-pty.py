@@ -106,18 +106,46 @@ class Session:
             os.setsid()
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-        self.proc = subprocess.Popen(
-            ["zsh", "-d", "-i"],
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            env=env,
-            cwd=str(cwd),
-            close_fds=True,
-            preexec_fn=child_setup,
-        )
-        register_process(self.proc.pid)
-        os.close(slave)
+        self.proc = None
+        slave_fd = slave
+        try:
+            self.proc = subprocess.Popen(
+                ["zsh", "-d", "-i"],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=env,
+                cwd=str(cwd),
+                close_fds=True,
+                preexec_fn=child_setup,
+            )
+            register_process(self.proc.pid)
+            os.close(slave)
+            slave_fd = None
+        except BaseException:
+            # The object cannot be returned, so no caller can close() it:
+            # tear the child and its descriptors down before propagating
+            # (ISSUE-0037).
+            if self.proc is not None:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                try:
+                    self.proc.wait(timeout=10)
+                except Exception:
+                    pass
+            try:
+                os.close(self.master)
+            except OSError:
+                pass
+            if slave_fd is not None:
+                try:
+                    os.close(slave_fd)
+                except OSError:
+                    pass
+            self.closed = True
+            raise
         self.output = bytearray()
         self.counter = 0
         self.closed = False
@@ -478,13 +506,22 @@ def nounset_startup() -> None:
         PROBE_FILE.parent.mkdir(parents=True, exist_ok=True)
         PROBE_FILE.unlink(missing_ok=True)
         session.check(
-            '{ print "z=$+functions[z] zi=$+functions[zi]"; } > '
+            '{ print "z=$+functions[z] zi=$+functions[zi] fbr=$+functions[fbr]'
+            ' cgm=$+functions[cgm] npkg=$+functions[npkg] upkg=$+functions[upkg]'
+            ' st=$+commands[secret-tool] nix=$+commands[nix]"; } > '
             + shlex.quote(str(PROBE_FILE))
         )
         session.sync()
         assert "parameter not set" not in session.text(), "NO_UNSET startup emitted a parameter error"
         state = PROBE_FILE.read_text().strip()
-        assert "z=1" in state and "zi=1" in state, f"NO_UNSET startup lost zoxide: {state}"
+        # cgm/npkg exist only when their tools do; the startup must match the
+        # toolset so hosts without them are not failed (0039/0042 residual).
+        for name in ("z", "zi", "fbr", "upkg"):
+            assert f"{name}=1" in state, f"NO_UNSET startup lost an integration: {state}"
+        if "st=1" in state:
+            assert "cgm=1" in state, f"NO_UNSET startup lost cgm despite secret-tool: {state}"
+        if "nix=1" in state:
+            assert "npkg=1" in state, f"NO_UNSET startup lost npkg despite nix: {state}"
     finally:
         session.close()
 
@@ -521,7 +558,7 @@ def fzf_warm_start() -> None:
 
 
 def fzf_blocked() -> None:
-    """An unsupported fzf must block pickers but not the rest of the shell."""
+    """An unsupported fzf must block the pickers but not the rest of the shell."""
     FAKEBIN.mkdir(parents=True, exist_ok=True)
     fake = FAKEBIN / "fzf"
     fake.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "0.67.0 (fake)"; exit 0; fi\nexit 1\n')
@@ -530,16 +567,24 @@ def fzf_blocked() -> None:
     session = Session(SCRATCH, extra_env=env)
     try:
         session.sync(timeout=45)
-        text = session.text()
-        assert "fzf 0.68.0 or newer is required" in text, "minimum-version diagnostic missing"
+        assert "fzf 0.68.0 or newer is required" in session.text(), "minimum-version diagnostic missing"
         session.clear_output()
         session.check("zhelp --plain package | command grep upkg")
+        for keys, label in ((b"\x14", "Ctrl+T"), (b"\x12", "Ctrl+R"), (b"\x1bc", "Alt+C")):
+            session.clear_output()
+            session.send(keys)
+            # Observation window: a picker spawned on this key would be a live
+            # fzf child; assert none appears for the whole window. The blocked
+            # integration returns without spawning, so this stays quiet.
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                assert not session._children(), f"{label} opened a picker despite blocked fzf"
+                ready, _, _ = select.select([session.master], [], [], 0.05)
+                if ready:
+                    session.read_available()
+            session.send(b"\x03")
+            session.wait_for_zle()
         session.clear_output()
-        session.send(b"\x14")
-        time.sleep(1.0)
-        assert not session._children(), "Ctrl+T opened a picker despite blocked fzf"
-        session.send(b"\x03")
-        session.wait_for_zle()
     finally:
         session.close()
 
@@ -982,7 +1027,7 @@ SCENARIOS: dict[str, tuple] = {
     "nounset-startup": (nounset_startup, "NO_UNSET startup keeps zoxide and other integrations"),
     "fzf-cold-start": (fzf_cold_start, "empty fzf cache is rebuilt"),
     "fzf-warm-start": (fzf_warm_start, "warm fzf cache is reused"),
-    "fzf-blocked": (fzf_blocked, "fzf below 0.68 blocks pickers only"),
+    "fzf-blocked": (fzf_blocked, "fzf below 0.68 blocks the Ctrl+T, Ctrl+R, and Alt+C pickers"),
     "env-no-color": (env_no_color, "NO_COLOR reaches pickers"),
     "env-extra-opts": (env_extra_opts, "ZSH_FZF_EXTRA_OPTS is appended"),
     "env-inherited-opts": (env_inherited_opts, "inherited fzf options are preserved"),
