@@ -6,6 +6,13 @@
 - **Affected:** `release.py:236-241`, `release.py:238`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The recovery entry point still lets marker/path exceptions escape
+as tracebacks. This is strictly operator-facing error handling and has no
+approval impact, so Low remains correct.
 
 ## Summary
 

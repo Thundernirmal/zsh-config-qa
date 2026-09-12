@@ -6,6 +6,17 @@
 - **Affected:** `run-safe.zsh:140` (`ports` needs `ss`), `run-safe.zsh:109-110` (`extract zip` needs `unzip`), `run-safe.zsh:147` (`zdoctor` needs `curl`, `lsd`, `ss`, `zoxide`), `run-safe.zsh:149` (`zdoctor --network --secrets` needs `curl`, `secret-tool`), `release.py:54-67` (tool metadata omits these)
 - **Confidence:** Confirmed by execution for `zdoctor`/`ports`; inspection for `unzip` and `--secrets`
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed with proposed-fix correction
+
+## Review disposition
+
+Confirmed. Missing host integrations currently become indistinguishable case
+failures even though the harness assigns missing live coverage to
+`INCOMPLETE`. Direct command cases such as `ports` and archive extraction can
+use explicit prerequisite skips. `zdoctor`, however, must not simply be gated
+away by every dependency it is designed to diagnose; split its functional and
+host-readiness assertions, or record prerequisite incompleteness separately,
+so the diagnostic command still receives meaningful coverage.
 
 ## Summary
 

@@ -6,6 +6,14 @@
 - **Affected:** `release.py:54-67`, `release.py:64-65`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The executable hash still identifies the binary, so this does not
+undermine the verdict, but the promised human-readable version evidence is
+blank for pacman. Selecting the first non-empty line is a proportionate Low
+severity repair.
 
 ## Summary
 

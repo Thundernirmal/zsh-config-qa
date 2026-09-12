@@ -6,6 +6,17 @@
 - **Affected:** `release.py:259-262`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; partially confirmed with fix constraint
+
+## Review disposition
+
+Confirmed as Low privacy hardening: the default/new results root and pointer do
+inherit umask-dependent broad modes, although the actual run evidence remains
+protected by its mode-0700 parent. The proposed unconditional `chmod` must not
+be applied to an existing caller-selected directory, because changing the
+permissions of an operator-owned shared location is outside the harness's
+ownership. Create private new roots and validate, reject, or clearly document
+existing custom roots instead.
 
 ## Summary
 

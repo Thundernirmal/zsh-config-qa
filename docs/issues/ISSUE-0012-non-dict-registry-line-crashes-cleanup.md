@@ -6,6 +6,14 @@
 - **Affected:** `release.py:121-131`, `release.py:126`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. Shape validation is absent and `TypeError` still escapes the
+per-entry cleanup handler, aborting later process and credential cleanup. The
+input is abnormal, but cleanup ledgers are a fail-closed boundary; Medium is
+defensible because the failure interrupts actual resource recovery.
 
 ## Summary
 

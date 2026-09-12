@@ -6,6 +6,15 @@
 - **Affected:** `qa_common.py:61-78` (scrub set at 64-69), `setup-fixtures.zsh:38-67`, `release.py:267`
 - **Confidence:** Confirmed by execution (`GIT_OBJECT_DIRECTORY`); inspection for sibling variables
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable with variable-by-variable validation
+
+## Review disposition
+
+Confirmed. `GIT_OBJECT_DIRECTORY` alone proves that inherited environment can
+redirect fixture writes beyond the run. The fix should scrub documented Git
+and Nix redirect/config families deliberately and test each supported family;
+not every similarly named leftover is active once its controlling count/key is
+removed. This remains a Medium isolation defect and complements ISSUE-0007.
 
 ## Summary
 

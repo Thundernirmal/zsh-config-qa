@@ -6,6 +6,14 @@
 - **Affected:** `qa-pty.py:953` with `qa-pty.py:725-734`; `qa-pty.py:944` with `qa-pty.py:567-579`; `qa-pty.py:941-943` with `qa-pty.py:543-562`
 - **Confidence:** Confirmed by inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The descriptions are user-visible coverage claims, while the
+implementations prove only picker opening/return and option construction.
+Either stronger observable effect checks or narrower descriptions are needed;
+Low severity is appropriate.
 
 ## Summary
 

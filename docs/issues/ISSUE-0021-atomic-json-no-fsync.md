@@ -6,6 +6,14 @@
 - **Affected:** `qa_common.py:20-23`, used for `report.json` at `release.py:280`, `release.py:302`, `release.py:334`, and `latest.json` at `release.py:344`
 - **Confidence:** Confirmed by inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed as Low durability hardening
+
+## Review disposition
+
+Confirmed. Unlike ISSUE-0013, syncing here can materially close the crash
+window after `atomic_json()` returns: file data and the rename can be made
+durable before the runner proceeds. The risk is limited to system failure and
+does not create a normal-path false approval, so Low remains correct.
 
 ## Summary
 

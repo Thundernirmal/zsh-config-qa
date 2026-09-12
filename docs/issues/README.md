@@ -5,14 +5,17 @@
 - **Target under test:** `~/.config/zsh @ 3f91a85b` (clean, read-only during the audit)
 - **Environment:** Linux 7.2.4-arch1, zsh 5.9.2, fzf 0.74.3, Python 3.14.7, Nix 2.35.2, `secret-tool` present
 - **Method:** [WORKFLOW.md](WORKFLOW.md) — recon, static review by ownership area, adversarial hypothesis checklist, isolated sandbox reproduction, triage, one file per issue, independent verification.
-- **Result:** 29 open issues filed (5 High, 8 Medium, 16 Low), 0 refuted. A fresh full gate run of the audited tree returned `RELEASE: YES` (exit 0, run `20260912-193357-431ba0a8`); the issues below are about what that `YES` could miss, not evidence that it was faked.
+- **Original result:** 29 issues filed as open (5 High, 8 Medium, 16 Low). A fresh full gate run of the audited tree returned `RELEASE: YES` (exit 0, run `20260912-193357-431ba0a8`); the issues below are about what that `YES` could miss, not evidence that it was faked.
+- **Review date/revision:** 2026-09-12 against harness `7e97581`
+- **Reviewed result:** 26 open issues (4 High, 8 Medium, 14 Low) and 3 refuted issues. ISSUE-0008 was reduced from High to Low.
 
 > The issued files contain machine-local paths inside reproduction commands. This repository is private; do not republish `docs/issues/` outside it. All reproductions are required to be sandboxed under `/tmp/opencode` and never to mutate the target checkout.
 
 ## How to read an issue
 
 Each `ISSUE-NNNN-*.md` follows one template: metadata (`Status`, `Severity`,
-`Category`, `Affected`, `Confidence`, `Filed`), then Summary, Impact, Root cause,
+`Category`, `Affected`, `Confidence`, `Filed`, `Reviewed`), then Review
+disposition, Summary, Impact, Root cause,
 Reproduction (copy-pasteable commands plus literal observed output), Expected
 behavior, Proposed fix, and Test plan. `Confidence` is one of:
 
@@ -22,6 +25,18 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 - **Hypothesis** — a grounded risk that could not be safely reproduced
   (used once here: ISSUE-0026, where the suspected race has a destructive
   worst case).
+
+## Review outcome
+
+- **Confirmed open as filed:** 0001, 0003, 0004, 0005, 0006, 0007, 0009,
+  0010, 0011, 0012, 0015, 0016, 0018, 0019, 0021, 0028, 0029.
+- **Open with corrected scope, severity, or fix constraints:** 0002, 0008,
+  0014, 0020, 0022, 0024, 0025, 0026, 0027. The individual review
+  dispositions are authoritative.
+- **Refuted:** 0013 (the proposed fsync does not close the reproduced
+  pre-close interruption window), 0017 (verified absence is the authoritative
+  cleanup postcondition), and 0023 (the real isolated test has no unrelated
+  error that can satisfy its assertion).
 
 ## Issue summary
 
@@ -34,7 +49,7 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 | [0005](ISSUE-0005-session-check-pipefail-leak.md) | `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test | Medium | test-fidelity | Confirmed by execution (isolated snippet and patched Session) |
 | [0006](ISSUE-0006-cleanup-misses-surviving-process-group.md) | cleanup() reports success while a recorded process group whose leader has exited survives | High | cleanup | Confirmed by execution |
 | [0007](ISSUE-0007-inherited-git-env-blinds-snapshot.md) | snapshot()/harness_identity() are blinded by inherited GIT_DIR/GIT_WORK_TREE | High | isolation | Confirmed by execution |
-| [0008](ISSUE-0008-credential-value-retained-unredacted.md) | Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics | High | secret-hygiene | Confirmed by inspection (retained artifact plus inert placeholder experiment) |
+| [0008](ISSUE-0008-credential-value-retained-unredacted.md) | Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics | Low | secret-hygiene | Confirmed by inspection (retained artifact plus inert placeholder experiment) |
 | [0009](ISSUE-0009-session-leak-on-sync-failure.md) | Scenarios constructing `Session` before `try/finally` leak the PTY/zsh when `sync()` fails | Medium | resource-lifecycle | Confirmed by execution (hanging startup HOME) and inspection |
 | [0010](ISSUE-0010-zhelp-queue-weak-assertion.md) | `zhelp-queue` assertion `words[:2]` also accepts the usage template | Low | evidence-integrity | Confirmed by inspection (recorded ZLE-buffer evidence and shlex behavior) |
 | [0011](ISSUE-0011-cgm-list-grep-q-sigpipe.md) | `cgm list \| command grep -q <name>` is an early-exiting-consumer SIGPIPE hazard under `PIPE_FAIL` | Low | flaky | Confirmed by execution (mechanism); live case latent, not observed |
@@ -57,10 +72,9 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 | [0028](ISSUE-0028-non-dict-evidence-row-aborts-stages.md) | A non-dict JSON evidence row raises `AttributeError` and aborts every remaining stage | Low | evidence-integrity | Confirmed by execution |
 | [0029](ISSUE-0029-sighup-sigquit-not-trapped.md) | SIGHUP/SIGQUIT are not trapped, so a terminal hangup skips cleanup | Low | cleanup | Confirmed by inspection; signal disposition confirmed by execution |
 
-Distribution: 5 High, 8 Medium, 16 Low. Categories (an issue may touch more
-than one): evidence integrity 6, cleanup 5, isolation 3, fail-open 2, flaky 2,
-containment 2, hygiene 2, contract drift 2, and one each of test fidelity,
-secret hygiene, resource lifecycle, durability, fail-closed.
+Open distribution after review: 4 High, 8 Medium, 14 Low. The three refuted
+issues are all Low. The table retains the original categories and confidence;
+status and any review qualification are recorded in each linked issue.
 
 ## Fix-first list
 
@@ -71,17 +85,17 @@ remediation sequence.
    coverage entries) and ISSUE-0002 (case body never runs) can let required
    coverage pass without proving anything; both need schema validation plus a
    body-started sentinel and a fault-injection test.
-2. **Restore identity and cleanup integrity (High).** ISSUE-0007 and
-   ISSUE-0024 share one fix family (scrub the full Git/Nix environment for
-   snapshots and stages). ISSUE-0006 (leaderless process-group recovery) and
-   ISSUE-0008 (credential value retention/redaction) complete the set.
+2. **Restore identity and cleanup integrity.** ISSUE-0007 (High) and
+   ISSUE-0024 (Medium) share one fix family: scrub the relevant Git/Nix
+   redirect environment for snapshots and stages. ISSUE-0006 (leaderless
+   process-group recovery) is the other High item.
 3. **Repair vacuous or weak required cases (Medium).** ISSUE-0003,
    ISSUE-0004, ISSUE-0005, ISSUE-0025, ISSUE-0026: each is a required case
    that can pass or fail for reasons other than the behavior it names.
-4. **Backlog robustness and evidence quality (Low).** ISSUE-0009 through
-   ISSUE-0023 and ISSUE-0027 through ISSUE-0029 are individually small; most
-   can be batched, but each still needs its own test where it changes a
-   behavior the gate depends on.
+4. **Backlog robustness and evidence quality (Low).** Address the remaining
+   open Low items according to their individual review dispositions. Treat
+   ISSUE-0020 as opportunistic maintenance. Do not implement refuted issues
+   0013, 0017, or 0023 as defect fixes.
 
 Any fix that changes executable behavior must update `coverage.json` and add or
 update a fault-injection self-test in the same change, then pass a new full

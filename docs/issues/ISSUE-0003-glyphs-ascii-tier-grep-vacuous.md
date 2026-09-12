@@ -6,6 +6,13 @@
 - **Affected:** `run-env.zsh:46`; target `functions/ztheme:125`
 - **Confidence:** Confirmed by execution (mutation experiment)
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The assertion still searches the complete status text for a value
+that is also echoed from its own input, so it does not prove the resolved glyph
+tier. The anchored-result assertion described below is the right fix family.
 
 ## Summary
 

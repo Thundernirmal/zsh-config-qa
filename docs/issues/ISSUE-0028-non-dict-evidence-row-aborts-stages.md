@@ -6,6 +6,14 @@
 - **Affected:** `release.py:70-81` (`r.get('name')` / `r.get('status')` assume dict rows), `release.py:203-211` (`run_stage` catches only `ValueError`), `release.py:310-314` (blanket handler stops the stage loop)
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The reader still assumes every decoded row is a mapping and the
+stage wrapper only handles `ValueError`. The verdict remains fail-closed, but
+explicit shape validation is needed to retain stage-local attribution and
+continue independent diagnostic stages. Low is appropriate.
 
 ## Summary
 

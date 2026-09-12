@@ -6,6 +6,14 @@
 - **Affected:** `qa-pty.py:414-415`, `443-444`, `464-465`, `480-481`, `496-497`, `684-685`, `702-703`, `778-779`, `899-900`, `915-916`; correct pattern at `qa-pty.py:383-391` (`fresh_zsh`)
 - **Confidence:** Confirmed by execution (hanging startup HOME) and inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. Several call sites still acquire a live `Session` and perform a
+fallible `sync()` before entering their cleanup scope. Outer stage cleanup is a
+backstop, but it does not prevent leaked sessions from contaminating the
+remainder of the PTY sweep; Medium remains reasonable.
 
 ## Summary
 

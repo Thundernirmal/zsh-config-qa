@@ -6,6 +6,14 @@
 - **Affected:** `run-safe.zsh:159-160`; target aliases `70-globals.zsh:14,18`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. Both command bodies still have the same successful final status
+when their global aliases are absent. They need assertions that distinguish
+alias expansion from ordinary arguments; this is substantive missing coverage,
+not a cosmetic test preference.
 
 ## Summary
 

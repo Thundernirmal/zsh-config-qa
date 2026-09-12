@@ -1,11 +1,25 @@
 # ISSUE-0023: The credential-backend cleanup test asserts only a non-empty error list
 
-- **Status:** Open
+- **Status:** Refuted
 - **Severity:** Low
 - **Category:** evidence-integrity
 - **Affected:** `tests/test_gate.py:167-170`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; refuted as a current coverage defect
+
+## Review disposition
+
+Refuted. The actual test runs in a freshly allocated work directory containing
+only the credential registry entry; there is no unrelated process-registry or
+descendant error available to satisfy `assertTrue`. With the injected backend
+failure, a non-empty result therefore proves cleanup did not report success;
+if the credential block were skipped, cleanup would return `[]` and the test
+would fail. The reproduction manufactures a second, independent error that is
+not part of the test fixture and therefore does not invalidate what the
+current test proves. Exact message and mock-call assertions would improve test
+diagnostics, but they are optional strengthening rather than a demonstrated
+issue.
 
 ## Summary
 

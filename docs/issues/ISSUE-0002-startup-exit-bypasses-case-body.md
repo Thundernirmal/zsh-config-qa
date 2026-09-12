@@ -6,6 +6,16 @@
 - **Affected:** `qa_common.py:148-157`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed with scope clarification
+
+## Review disposition
+
+Confirmed. `run_case()` still has no parent-observed sentinel proving control
+returned from `source` and entered the case body. A sourced `exit 0` therefore
+records that safe/env case as passing. This makes required case evidence
+vacuous and warrants a fix. Scope clarification: the defect can contribute to,
+but does not by itself guarantee, a full false `YES`, because regression and
+PTY stages provide independent failure opportunities.
 
 ## Summary
 

@@ -1,11 +1,24 @@
 # ISSUE-0013: Process-registry writes are not fsync'd, unlike case records
 
-- **Status:** Open
+- **Status:** Refuted
 - **Severity:** Low
 - **Category:** cleanup
 - **Affected:** `release.py:171-172`, `qa_common.py:93-97`, compare `qa_common.py:121-131`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; refuted because the reproduction does not establish the claimed defect
+
+## Review disposition
+
+Refuted. The demonstrated zero-length file occurs when the writer is killed
+before the stream is closed; an `fsync()` placed after `write()`/`flush()` has
+the same unavoidable pre-sync interruption window and cannot repair that
+case. After normal close, the append is visible to a recovery process following
+runner-only SIGKILL. A machine power loss also terminates the registered
+processes, so persistence of this process-cleanup registry is not needed to
+kill survivors after reboot. An `fsync()` may be chosen as general durability
+hardening, but the evidence here does not establish an actionable cleanup bug
+or show that the proposed fix changes the reproduced outcome.
 
 ## Summary
 

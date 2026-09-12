@@ -6,6 +6,13 @@
 - **Affected:** `qa-pty.py:674`; target registry `lib/command-registry.zsh:106`
 - **Confidence:** Confirmed by inspection (recorded ZLE-buffer evidence and shlex behavior)
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. Prefix-only token comparison accepts both the example and the
+longer usage template. Exact buffer equality is the correct observable
+contract, and Low severity matches this narrow evidence gap.
 
 ## Summary
 

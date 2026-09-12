@@ -6,6 +6,14 @@
 - **Affected:** `qa-pty.py:827` (safe counterpart at `qa-pty.py:835`)
 - **Confidence:** Confirmed by execution (mechanism); live case latent, not observed
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed as a latent Low issue
+
+## Review disposition
+
+Confirmed. The current isolated catalogue normally keeps output small, so this
+is unlikely to fire today, but the pipeline still violates the harness's
+producer-completion rule and has a straightforward capture-then-inspect fix.
+Low severity correctly reflects that the live failure has not been observed.
 
 ## Summary
 

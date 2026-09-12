@@ -6,6 +6,14 @@
 - **Affected:** `release.py:25-41`, `release.py:44-51`, `release.py:254`, `release.py:321`, `release.py:329`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. `snapshot()` still invokes Git with the inherited runner
+environment, independently of the scrubbed stage environment. Git repository
+redirection variables can therefore invalidate both target and harness
+identity evidence. This is a real false-approval path and remains High.
 
 ## Summary
 

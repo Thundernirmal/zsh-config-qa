@@ -6,6 +6,16 @@
 - **Affected:** `setup-fixtures.zsh:16` (guard) vs `run-safe.zsh:26-29` and `run-env.zsh:24-27` (missing guard)
 - **Confidence:** Confirmed by execution (guard behavior); destructive consequence analyzed only
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed as defense-in-depth only
+
+## Review disposition
+
+Confirmed at Low severity. Normal launcher flow creates a private run and the
+fixture stage replaces `scratch` with a real directory, so this is not a
+demonstrated normal-flow escape. The consumers nevertheless perform relative
+destructive operations without revalidating the directory they enter. A
+shared scratch validator would close that narrow state-replacement gap without
+weakening the existing ownership boundary.
 
 ## Summary
 

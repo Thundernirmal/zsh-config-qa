@@ -6,6 +6,16 @@
 - **Affected:** `qa-pty.py:589-591` (`ctrl-t-insert`), `qa-pty.py:666-670` (`zhelp-queue`), `qa-pty.py:709-710` (`fbr-select`), `qa-pty.py:748-749` (`fkill-signal`), `qa-pty.py:923-924` (`npkg-add`)
 - **Confidence:** Hypothesis for the race; target-side destructive behavior confirmed by inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; retained as a hypothesis with narrowed priority
+
+## Review disposition
+
+Confirmed as an actionable synchronization hypothesis, not as an observed
+failure. The contract explicitly rejects a fixed sleep as readiness proof.
+Prioritize `fkill-signal`, whose wrong selection could affect an unrelated user
+process. The other named cases have owned-state postcondition checks and mainly
+risk a false failure; they should share a verified selection helper but do not
+carry the same safety impact.
 
 ## Summary
 

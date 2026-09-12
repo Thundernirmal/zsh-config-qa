@@ -6,6 +6,14 @@
 - **Affected:** `release.py:274`, `release.py:300`, `release.py:203`, `release.py:70-81`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The current runner still passes `coverage.get(name)` to
+`run_stage()`, treats `None` as “do not validate evidence,” and does not reject
+an empty or duplicate expected inventory. This is a real fail-open acceptance
+gap, and High severity remains justified.
 
 ## Summary
 

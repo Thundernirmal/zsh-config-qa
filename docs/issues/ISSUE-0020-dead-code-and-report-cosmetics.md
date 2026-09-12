@@ -6,6 +6,14 @@
 - **Affected:** `qa_common.py:5`, `tests/test_gate.py:5`, `qa-pty.py:193-203`, `release.py:338`
 - **Confidence:** Confirmed by inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed as non-blocking maintenance only
+
+## Review disposition
+
+Confirmed, but non-blocking. The unused imports/method and Markdown whitespace
+are present exactly as described and have no verdict, evidence-integrity, or
+runtime impact. They should be handled only as opportunistic maintenance; they
+do not justify release work on their own.
 
 ## Summary
 

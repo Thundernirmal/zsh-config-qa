@@ -6,6 +6,17 @@
 - **Affected:** `release.py:254` (`before = snapshot(repo)` before the run directory and before the `try`), `release.py:26-41` (`snapshot` with `check=True`), `release.py:246` (only `init.zsh` is validated), `release.py:274` (`coverage.json` parse), `release.py:277-279` (`tool_metadata`)
 - **Confidence:** Confirmed by execution (non-git target); inspection for the other paths
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed with scope clarification
+
+## Review disposition
+
+Confirmed at Low severity. Invalid target/setup arguments are explicitly
+allowed to fail before a report, so a non-Git target does not itself violate
+the verdict contract; it should receive a concise validation error rather than
+a traceback. Once an owned run directory exists, initialization failures
+should either be captured in the initial `INCOMPLETE` report or remove/identify
+the reportless allocation. This is diagnosability debt, not a false-approval
+path.
 
 ## Summary
 

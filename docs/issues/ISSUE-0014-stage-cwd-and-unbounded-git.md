@@ -6,6 +6,19 @@
 - **Affected:** `release.py:161-172` (cwd at `release.py:168`), stage commands at `release.py:285-293`; `qa-pty.py:696-700`
 - **Confidence:** Confirmed by inspection
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; partially confirmed and requires scope correction
+
+## Review disposition
+
+Partially confirmed. The two direct Git setup calls are genuinely unbounded
+relative to the normal per-command contract and should use the shared bounded
+primitive. A single implicit cwd for every stage is also brittle. However, the
+proposed `cwd=repo` correction is unsafe for this project: the selected target
+must remain read-only, and a target script using relative writes should not be
+given its checkout as the write destination. Any cwd change should be explicit
+per stage and use an owned run location unless the target script self-locates
+without writing. Keep this issue open for the bounded-call fix and revised cwd
+design; do not apply its current proposed cwd verbatim.
 
 ## Summary
 

@@ -1,11 +1,22 @@
 # ISSUE-0017: `cleanup()` ignores the result of `secret-tool clear` (`p` is unused)
 
-- **Status:** Open
+- **Status:** Refuted
 - **Severity:** Low
 - **Category:** cleanup
 - **Affected:** `release.py:141`
 - **Confidence:** Confirmed by inspection (AST check)
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; refuted as a cleanup defect
+
+## Review disposition
+
+Refuted as an actionable cleanup issue. The following independent lookup is
+the authoritative postcondition check: if it proves the credential absent,
+cleanup succeeded regardless of whether `clear` reported “not found” or
+another nonzero result. Converting a failed clear plus verified absence into a
+cleanup error would create a false failure. The unused local assignment is a
+minor dead-code observation already covered by ISSUE-0020; it can be removed
+opportunistically without changing cleanup semantics.
 
 ## Summary
 

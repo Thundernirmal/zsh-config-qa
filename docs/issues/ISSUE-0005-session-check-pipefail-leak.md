@@ -6,6 +6,14 @@
 - **Affected:** `qa-pty.py:281-295` (write at `qa-pty.py:284`)
 - **Confidence:** Confirmed by execution (isolated snippet and patched Session)
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. `Session.check()` still sources a file containing `setopt
+LOCAL_OPTIONS PIPE_FAIL` at interactive top level, where no function scope
+restores the option. The resulting state contamination is a real test-fidelity
+defect; Medium severity is proportionate.
 
 ## Summary
 

@@ -6,6 +6,14 @@
 - **Affected:** `release.py:281-284` (handlers installed only for `SIGTERM`/`SIGINT`), `release.py:316-317` (only those two are ignored during the final phase), `README.md:63`
 - **Confidence:** Confirmed by inspection; signal disposition confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. The runner still handles only SIGINT and SIGTERM, while its detached
+stage/process groups can survive a terminal hangup after the runner receives
+default SIGHUP termination. Extending the same interruption/finalization path
+to SIGHUP and SIGQUIT is proportionate Low-severity cleanup hardening.
 
 ## Summary
 

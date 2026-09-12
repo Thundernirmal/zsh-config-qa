@@ -6,6 +6,14 @@
 - **Affected:** `release.py:113-158`, `release.py:126-129`, `qa_common.py:85-90`
 - **Confidence:** Confirmed by execution
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed actionable as filed
+
+## Review disposition
+
+Confirmed. Recovery cannot safely prove ownership from a dead leader's stale
+PID/start tuple, yet the current path silently treats that state as successful
+cleanup. At minimum it must report cleanup as unverified; a fix must retain the
+existing PID-reuse protection rather than blindly signaling a reused pgid.
 
 ## Summary
 

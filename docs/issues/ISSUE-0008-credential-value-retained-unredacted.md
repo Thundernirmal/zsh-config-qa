@@ -1,11 +1,21 @@
 # ISSUE-0008: Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics
 
 - **Status:** Open
-- **Severity:** High
+- **Severity:** Low
 - **Category:** secret-hygiene
 - **Affected:** `qa-pty.py:283-284` (script write), `qa-pty.py:828` (value in check code), `qa-pty.py:146-191` (`wait_for`/`wait_for_since` tails), `qa-pty.py:373-380` (`run()` detail), redaction only at `qa-pty.py:313-317`; echo-off check at `qa-pty.py:819-824`
 - **Confidence:** Confirmed by inspection (retained artifact plus inert placeholder experiment)
 - **Filed:** 2026-09-12 against harness `60f633a` plus the pending audit working tree
+- **Reviewed:** 2026-09-12 against harness `7e97581`; confirmed, severity reduced from High to Low
+
+## Review disposition
+
+Confirmed, but the original severity was overstated. The plaintext synthetic
+value is still written to a retained command artifact and redaction is still
+inconsistently applied, directly violating the harness's value-handling
+contract. However, the value is generated uniquely for this test, is never a
+real user credential, and the artifact is inside a mode-0700 run directory.
+That supports a hygiene/evidence fix, not a High-impact credential breach.
 
 ## Summary
 
