@@ -1,6 +1,6 @@
 # ISSUE-0014: Target-owned stages run with `cwd=PROJECT`; fixture Git setup uses unbounded `subprocess.run`
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** containment
 - **Affected:** `release.py:161-172` (cwd at `release.py:168`), stage commands at `release.py:285-293`; `qa-pty.py:696-700`
@@ -66,3 +66,25 @@ No `timeout`, no output capture, no `bounded()`/process registration. If Git blo
 - Self-test: assert the stage plan maps `regression`/`fzf` to `cwd=repo` (testable by inspecting the `run_stage` call configuration or by running a stub target script that prints `$PWD`).
 - Fault-injection: prepend a stub `git` on `PATH` that sleeps; run `fbr_select` and assert it fails within the configured bound rather than hanging (mirrors the existing bounded/timeout tests in `tests/test_gate.py`).
 - Re-run `./run-all.zsh selftest safe env` and `./run-all.zsh` before claiming full coverage; no target files change.
+
+## Fix (2026-09-12, batch 6)
+
+- **Status change:** Open → Fixed.
+- **Owned cwd for every stage:** `release.run_stage` now launches all stage
+  commands with `cwd=work` (the owned 0700 run directory) instead of
+  `cwd=PROJECT`. Verified that every stage self-locates: `selftest.py` and
+  `qa-pty.py` resolve via `__file__`/env, the target's `run-tests.zsh` `cd`s to
+  its repo, and the target's `test-fzf-pty.py` derives `REPO_ROOT` from
+  `__file__`. A stray relative write now lands in the run directory instead of
+  the harness repository (where it would have invalidated the harness
+  fingerprint mid-run). Sweep case children keep their own
+  `cwd=work/scratch`.
+- **Bounded fixture Git:** `fbr_select`'s detach and branch force-create now
+  use `common.bounded(argv, cwd=SCRATCH, timeout=30)` with asserted return
+  codes (registered processes, whole-group timeout kill) instead of unbounded
+  `subprocess.run`.
+- Fault-injection tests: `test_stage_commands_run_in_the_owned_run_directory`
+  (fails if `cwd=PROJECT` returns) and `test_fbr_fixture_git_setup_is_bounded`
+  (asserts `bounded` and the absence of `subprocess.run(["git"` in the
+  scenario body).
+- Verified: full gate `20260912-215458-9601a735` = `YES`, exit 0.

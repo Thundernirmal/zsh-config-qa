@@ -8,6 +8,7 @@
 - **Original result:** 29 issues filed as open (5 High, 8 Medium, 16 Low). A fresh full gate run of the audited tree returned `RELEASE: YES` (exit 0, run `20260912-193357-431ba0a8`); the issues below are about what that `YES` could miss, not evidence that it was faked.
 - **Review date/revision:** 2026-09-12 against harness `7e97581`
 - **Reviewed result:** 26 open issues (4 High, 8 Medium, 14 Low) and 3 refuted issues. ISSUE-0008 was reduced from High to Low.
+- **Remediation result (2026-09-12):** all 26 open issues fixed in five reviewed batches (commits `ef8f429`, `6953be1`, `2ea2d8b`, `e898a90`, `1a66d03`); every batch passed a fresh full gate (`YES`, exit 0) and an independent adversarial review with a cumulative regression check. Final full gate: `20260912-215025-6c8985a5` = `YES`, exit 0, 63/11/4/51 case rows plus 28+28 PTY rows, cleanup verified, target clean and unchanged. Statuses per issue: Fixed (26), Refuted (3), none open.
 
 > The issued files contain machine-local paths inside reproduction commands. This repository is private; do not republish `docs/issues/` outside it. All reproductions are required to be sandboxed under `/tmp/opencode` and never to mutate the target checkout.
 
@@ -40,37 +41,37 @@ behavior, Proposed fix, and Test plan. `Confidence` is one of:
 
 ## Issue summary
 
-| ID | Title | Severity | Category | Confidence |
-|---|---|---|---|---|
-| [0001](ISSUE-0001-missing-coverage-key-disables-inventory.md) | Missing or empty coverage.json key silently disables case-inventory enforcement | High | fail-open | Confirmed by execution |
-| [0002](ISSUE-0002-startup-exit-bypasses-case-body.md) | A target init.zsh that calls `exit 0` makes run_case pass without executing the case body | High | fail-open | Confirmed by execution |
-| [0003](ISSUE-0003-glyphs-ascii-tier-grep-vacuous.md) | `glyphs ascii tier` env case cannot fail because the output annotation echoes the requested tier | Medium | evidence-integrity | Confirmed by execution (mutation experiment) |
-| [0004](ISSUE-0004-l-ne-alias-cases-vacuous.md) | `L` and `NE` alias cases pass with no aliases defined (vacuous assertions) | Medium | evidence-integrity | Confirmed by execution |
-| [0005](ISSUE-0005-session-check-pipefail-leak.md) | `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test | Medium | test-fidelity | Confirmed by execution (isolated snippet and patched Session) |
-| [0006](ISSUE-0006-cleanup-misses-surviving-process-group.md) | cleanup() reports success while a recorded process group whose leader has exited survives | High | cleanup | Confirmed by execution |
-| [0007](ISSUE-0007-inherited-git-env-blinds-snapshot.md) | snapshot()/harness_identity() are blinded by inherited GIT_DIR/GIT_WORK_TREE | High | isolation | Confirmed by execution |
-| [0008](ISSUE-0008-credential-value-retained-unredacted.md) | Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics | Low | secret-hygiene | Confirmed by inspection (retained artifact plus inert placeholder experiment) |
-| [0009](ISSUE-0009-session-leak-on-sync-failure.md) | Scenarios constructing `Session` before `try/finally` leak the PTY/zsh when `sync()` fails | Medium | resource-lifecycle | Confirmed by execution (hanging startup HOME) and inspection |
-| [0010](ISSUE-0010-zhelp-queue-weak-assertion.md) | `zhelp-queue` assertion `words[:2]` also accepts the usage template | Low | evidence-integrity | Confirmed by inspection (recorded ZLE-buffer evidence and shlex behavior) |
-| [0011](ISSUE-0011-cgm-list-grep-q-sigpipe.md) | `cgm list \| command grep -q <name>` is an early-exiting-consumer SIGPIPE hazard under `PIPE_FAIL` | Low | flaky | Confirmed by execution (mechanism); live case latent, not observed |
-| [0012](ISSUE-0012-non-dict-registry-line-crashes-cleanup.md) | A valid-JSON non-dict line in processes.jsonl raises an uncaught TypeError in cleanup() | Medium | cleanup | Confirmed by execution |
-| [0013](ISSUE-0013-process-registry-writes-not-fsynced.md) | Process-registry writes are not fsync'd, unlike case records | Low | cleanup | Confirmed by execution |
-| [0014](ISSUE-0014-stage-cwd-and-unbounded-git.md) | Target-owned stages run with `cwd=PROJECT`; fixture Git setup uses unbounded `subprocess.run` | Low | containment | Confirmed by inspection |
-| [0015](ISSUE-0015-blank-pacman-version-line.md) | tool_metadata records a blank first version line for tools like pacman | Low | evidence-integrity | Confirmed by execution |
-| [0016](ISSUE-0016-cleanup-nonexistent-emits-traceback.md) | `--cleanup /nonexistent` emits a raw Python traceback | Low | hygiene | Confirmed by execution |
-| [0017](ISSUE-0017-secret-tool-clear-result-ignored.md) | `cleanup()` ignores the result of `secret-tool clear` (`p` is unused) | Low | cleanup | Confirmed by inspection (AST check) |
-| [0018](ISSUE-0018-scratch-symlink-guard-gap.md) | `scratch` symlink is rejected only in `setup-fixtures.zsh`; sweeps check only `-d` | Low | containment | Confirmed by execution (guard behavior); destructive consequence analyzed only |
-| [0019](ISSUE-0019-scenario-descriptions-overclaim.md) | Scenario descriptions overclaim relative to what is asserted (`fkill` "cancels safely", `ctrl-t` "toggles previews", layout "frame and preview") | Low | contract-drift | Confirmed by inspection |
-| [0020](ISSUE-0020-dead-code-and-report-cosmetics.md) | Dead code and report cosmetics in the harness sources | Low | hygiene | Confirmed by inspection |
-| [0021](ISSUE-0021-atomic-json-no-fsync.md) | atomic_json renames without fsync, so report durability does not match the README claim | Low | durability | Confirmed by inspection |
-| [0022](ISSUE-0022-results-root-mode-0755.md) | Results root `.runs/` is world-readable (0755) while run directories are 0700 | Low | isolation | Confirmed by execution |
-| [0023](ISSUE-0023-weak-cleanup-test-assertion.md) | The credential-backend cleanup test asserts only a non-empty error list | Low | evidence-integrity | Confirmed by execution |
-| [0024](ISSUE-0024-git-nix-redirect-vars-unscrubbed.md) | Stage environment scrub leaves Git/Nix redirect variables that can move fixture writes outside the run | Medium | isolation | Confirmed by execution (`GIT_OBJECT_DIRECTORY`); inspection for sibling variables |
-| [0025](ISSUE-0025-ungated-sweep-tools-fail-instead-of-skip.md) | Ungated safe-sweep cases turn missing optional tools into NO instead of INCOMPLETE | Medium | contract-drift | Confirmed by execution for `zdoctor`/`ports`; inspection for `unzip` and `--secrets` |
-| [0026](ISSUE-0026-picker-enter-after-fixed-sleep.md) | Picker-select scenarios press Enter after fixed sleeps without confirming the filter; `fkill-signal` can signal the wrong process | Medium | flaky | Hypothesis for the race; target-side destructive behavior confirmed by inspection |
-| [0027](ISSUE-0027-pre-report-setup-failures.md) | Pre-stage setup failures escape the report/recovery envelope | Low | fail-closed | Confirmed by execution (non-git target); inspection for the other paths |
-| [0028](ISSUE-0028-non-dict-evidence-row-aborts-stages.md) | A non-dict JSON evidence row raises `AttributeError` and aborts every remaining stage | Low | evidence-integrity | Confirmed by execution |
-| [0029](ISSUE-0029-sighup-sigquit-not-trapped.md) | SIGHUP/SIGQUIT are not trapped, so a terminal hangup skips cleanup | Low | cleanup | Confirmed by inspection; signal disposition confirmed by execution |
+| ID | Title | Severity | Category | Status | Confidence |
+|---|---|---|---|---|---|
+| [0001](ISSUE-0001-missing-coverage-key-disables-inventory.md) | Missing or empty coverage.json key silently disables case-inventory enforcement | High | fail-open | Fixed | Confirmed by execution |
+| [0002](ISSUE-0002-startup-exit-bypasses-case-body.md) | A target init.zsh that calls `exit 0` makes run_case pass without executing the case body | High | fail-open | Fixed | Confirmed by execution |
+| [0003](ISSUE-0003-glyphs-ascii-tier-grep-vacuous.md) | `glyphs ascii tier` env case cannot fail because the output annotation echoes the requested tier | Medium | evidence-integrity | Fixed | Confirmed by execution (mutation experiment) |
+| [0004](ISSUE-0004-l-ne-alias-cases-vacuous.md) | `L` and `NE` alias cases pass with no aliases defined (vacuous assertions) | Medium | evidence-integrity | Fixed | Confirmed by execution |
+| [0005](ISSUE-0005-session-check-pipefail-leak.md) | `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test | Medium | test-fidelity | Fixed | Confirmed by execution (isolated snippet and patched Session) |
+| [0006](ISSUE-0006-cleanup-misses-surviving-process-group.md) | cleanup() reports success while a recorded process group whose leader has exited survives | High | cleanup | Fixed | Confirmed by execution |
+| [0007](ISSUE-0007-inherited-git-env-blinds-snapshot.md) | snapshot()/harness_identity() are blinded by inherited GIT_DIR/GIT_WORK_TREE | High | isolation | Fixed | Confirmed by execution |
+| [0008](ISSUE-0008-credential-value-retained-unredacted.md) | Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics | Low | secret-hygiene | Fixed | Confirmed by inspection (retained artifact plus inert placeholder experiment) |
+| [0009](ISSUE-0009-session-leak-on-sync-failure.md) | Scenarios constructing `Session` before `try/finally` leak the PTY/zsh when `sync()` fails | Medium | resource-lifecycle | Fixed | Confirmed by execution (hanging startup HOME) and inspection |
+| [0010](ISSUE-0010-zhelp-queue-weak-assertion.md) | `zhelp-queue` assertion `words[:2]` also accepts the usage template | Low | evidence-integrity | Fixed | Confirmed by inspection (recorded ZLE-buffer evidence and shlex behavior) |
+| [0011](ISSUE-0011-cgm-list-grep-q-sigpipe.md) | `cgm list \| command grep -q <name>` is an early-exiting-consumer SIGPIPE hazard under `PIPE_FAIL` | Low | flaky | Fixed | Confirmed by execution (mechanism); live case latent, not observed |
+| [0012](ISSUE-0012-non-dict-registry-line-crashes-cleanup.md) | A valid-JSON non-dict line in processes.jsonl raises an uncaught TypeError in cleanup() | Medium | cleanup | Fixed | Confirmed by execution |
+| [0013](ISSUE-0013-process-registry-writes-not-fsynced.md) | Process-registry writes are not fsync'd, unlike case records | Low | cleanup | Refuted | Confirmed by execution |
+| [0014](ISSUE-0014-stage-cwd-and-unbounded-git.md) | Target-owned stages run with `cwd=PROJECT`; fixture Git setup uses unbounded `subprocess.run` | Low | containment | Fixed | Confirmed by inspection |
+| [0015](ISSUE-0015-blank-pacman-version-line.md) | tool_metadata records a blank first version line for tools like pacman | Low | evidence-integrity | Fixed | Confirmed by execution |
+| [0016](ISSUE-0016-cleanup-nonexistent-emits-traceback.md) | `--cleanup /nonexistent` emits a raw Python traceback | Low | hygiene | Fixed | Confirmed by execution |
+| [0017](ISSUE-0017-secret-tool-clear-result-ignored.md) | `cleanup()` ignores the result of `secret-tool clear` (`p` is unused) | Low | cleanup | Refuted | Confirmed by inspection (AST check) |
+| [0018](ISSUE-0018-scratch-symlink-guard-gap.md) | `scratch` symlink is rejected only in `setup-fixtures.zsh`; sweeps check only `-d` | Low | containment | Fixed | Confirmed by execution (guard behavior); destructive consequence analyzed only |
+| [0019](ISSUE-0019-scenario-descriptions-overclaim.md) | Scenario descriptions overclaim relative to what is asserted (`fkill` "cancels safely", `ctrl-t` "toggles previews", layout "frame and preview") | Low | contract-drift | Fixed | Confirmed by inspection |
+| [0020](ISSUE-0020-dead-code-and-report-cosmetics.md) | Dead code and report cosmetics in the harness sources | Low | hygiene | Fixed | Confirmed by inspection |
+| [0021](ISSUE-0021-atomic-json-no-fsync.md) | atomic_json renames without fsync, so report durability does not match the README claim | Low | durability | Fixed | Confirmed by inspection |
+| [0022](ISSUE-0022-results-root-mode-0755.md) | Results root `.runs/` is world-readable (0755) while run directories are 0700 | Low | isolation | Fixed | Confirmed by execution |
+| [0023](ISSUE-0023-weak-cleanup-test-assertion.md) | The credential-backend cleanup test asserts only a non-empty error list | Low | evidence-integrity | Refuted | Confirmed by execution |
+| [0024](ISSUE-0024-git-nix-redirect-vars-unscrubbed.md) | Stage environment scrub leaves Git/Nix redirect variables that can move fixture writes outside the run | Medium | isolation | Fixed | Confirmed by execution (`GIT_OBJECT_DIRECTORY`); inspection for sibling variables |
+| [0025](ISSUE-0025-ungated-sweep-tools-fail-instead-of-skip.md) | Ungated safe-sweep cases turn missing optional tools into NO instead of INCOMPLETE | Medium | contract-drift | Fixed | Confirmed by execution for `zdoctor`/`ports`; inspection for `unzip` and `--secrets` |
+| [0026](ISSUE-0026-picker-enter-after-fixed-sleep.md) | Picker-select scenarios press Enter after fixed sleeps without confirming the filter; `fkill-signal` can signal the wrong process | Medium | flaky | Fixed | Hypothesis for the race; target-side destructive behavior confirmed by inspection |
+| [0027](ISSUE-0027-pre-report-setup-failures.md) | Pre-stage setup failures escape the report/recovery envelope | Low | fail-closed | Fixed | Confirmed by execution (non-git target); inspection for the other paths |
+| [0028](ISSUE-0028-non-dict-evidence-row-aborts-stages.md) | A non-dict JSON evidence row raises `AttributeError` and aborts every remaining stage | Low | evidence-integrity | Fixed | Confirmed by execution |
+| [0029](ISSUE-0029-sighup-sigquit-not-trapped.md) | SIGHUP/SIGQUIT are not trapped, so a terminal hangup skips cleanup | Low | cleanup | Fixed | Confirmed by inspection; signal disposition confirmed by execution |
 
 Open distribution after review: 4 High, 8 Medium, 14 Low. The three refuted
 issues are all Low. The table retains the original categories and confidence;

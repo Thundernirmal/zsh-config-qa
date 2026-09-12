@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -124,6 +125,12 @@ class Session:
         self.last_status = None
 
     # -- low level -------------------------------------------------------
+    def redact(self, value: str) -> str:
+        """Replace registered synthetic values before anything becomes evidence."""
+        for secret in self.redactions:
+            value = value.replace(secret, '<redacted synthetic credential>')
+        return value
+
     def read_available(self) -> bool:
         try:
             chunk = os.read(self.master, 65536)
@@ -155,7 +162,7 @@ class Session:
             if remaining <= 0:
                 raise AssertionError(
                     f"timed out waiting for {marker!r}; output tail:\n"
-                    f"{decode(strip_terminal_controls(self.output))[-3000:]}"
+                    f"{self.redact(decode(strip_terminal_controls(self.output)))[-3000:]}"
                 )
             ready, _, _ = select.select([self.master], [], [], min(remaining, 0.2))
             if ready and not self.read_available():
@@ -164,7 +171,7 @@ class Session:
                 break
         raise AssertionError(
             f"process exited before {marker!r}; output tail:\n"
-            f"{decode(strip_terminal_controls(self.output))[-3000:]}"
+            f"{self.redact(decode(strip_terminal_controls(self.output)))[-3000:]}"
         )
 
     def wait_for_since(self, marker: str, offset: int, timeout: float = 10.0) -> None:
@@ -178,7 +185,7 @@ class Session:
             if remaining <= 0:
                 raise AssertionError(
                     f"timed out waiting for {marker!r} after output offset {offset}; tail:\n"
-                    f"{decode(strip_terminal_controls(self.output))[-1500:]}"
+                    f"{self.redact(decode(strip_terminal_controls(self.output)))[-1500:]}"
                 )
             ready, _, _ = select.select([self.master], [], [], min(remaining, 0.2))
             if ready and not self.read_available():
@@ -187,7 +194,7 @@ class Session:
                 break
         raise AssertionError(
             f"process exited before {marker!r} after output offset {offset}; tail:\n"
-            f"{decode(strip_terminal_controls(self.output))[-1500:]}"
+            f"{self.redact(decode(strip_terminal_controls(self.output)))[-1500:]}"
         )
 
     def _children(self) -> list[str]:
@@ -301,10 +308,7 @@ class Session:
         return self.buffer_probe.read_text()
 
     def text(self) -> str:
-        text = decode(strip_terminal_controls(self.output))
-        for value in self.redactions:
-            text = text.replace(value, '<redacted synthetic credential>')
-        return text
+        return self.redact(decode(strip_terminal_controls(self.output)))
 
     def clear_output(self) -> None:
         self.output.clear()
@@ -703,8 +707,10 @@ def fbr_picker() -> None:
 def fbr_select() -> None:
     # Detach first so qa-feature can be force-created even if a previous run
     # left it checked out.
-    subprocess.run(["git", "-C", str(GITREPO), "checkout", "-q", "--detach"], check=True)
-    subprocess.run(["git", "-C", str(GITREPO), "branch", "-f", "qa-feature"], check=True)
+    for argv in (["git", "-C", str(GITREPO), "checkout", "-q", "--detach"],
+                 ["git", "-C", str(GITREPO), "branch", "-f", "qa-feature"]):
+        result = bounded(argv, cwd=SCRATCH, timeout=30)
+        assert result.returncode == 0, f'fixture git setup failed: {result.stderr.strip()}'
 
     session = Session(GITREPO, extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
@@ -839,7 +845,12 @@ def cgm_roundtrip(no_color=False) -> None:
         session.wait_for('Saved ' + name if no_color else 'Credential Saved', timeout=20)
         session.sync()
         session.check('cgm list > "$HOME/cgm-list" && command grep -q ' + shlex.quote(name) + ' "$HOME/cgm-list"')
-        session.check(f'cgm env {name} && [[ ${name} == {shlex.quote(secret)} ]]')
+        # The value is verified through its SHA-256, never stored or echoed:
+        # the on-disk check script must not contain the synthetic secret.
+        secret_hash = hashlib.sha256(secret.encode()).hexdigest()
+        session.check('cgm env ' + name
+                      + ' && [[ $(print -rn -- $' + name + ' | sha256sum | cut -d" " -f1) == '
+                      + secret_hash + ' ]]')
         session.check(f'cgm unset {name} && (( ! $+parameters[{name}] ))')
         session.clear_output()
         session.sendline('cgm delete ' + name)

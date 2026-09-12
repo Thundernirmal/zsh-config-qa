@@ -1,6 +1,6 @@
 # ISSUE-0008: Synthetic credential value is retained in `pty-command-*.zsh` and bypasses redaction in failure diagnostics
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** secret-hygiene
 - **Affected:** `qa-pty.py:283-284` (script write), `qa-pty.py:828` (value in check code), `qa-pty.py:146-191` (`wait_for`/`wait_for_since` tails), `qa-pty.py:373-380` (`run()` detail), redaction only at `qa-pty.py:313-317`; echo-off check at `qa-pty.py:819-824`
@@ -88,3 +88,28 @@ The script appends an inert string to `session.redactions` and to the output buf
 - Fault-injection test in `tests/test_gate.py`: run a patched `cgm`-style check with an inert placeholder, then assert the placeholder appears in `session.redactions` but in **no** file under `WORK` and in no recorded `detail`.
 - Assert a forced `wait_for()` timeout with a registered redaction returns the placeholder only in redacted form.
 - Re-run `./run-all.zsh pty` and confirm `cgm`/`cgm-no-color` still pass and `secret-tool lookup` proves deletion; then grep the retained run for the value namespace and confirm zero hits outside the registry.
+
+## Fix (2026-09-12, batch 6)
+
+- **Status change:** Open → Fixed.
+- **No plaintext in on-disk scripts:** `cgm_roundtrip` now verifies the loaded
+  value through its SHA-256 (`cgm env <name> && [[ $(print -rn -- $<name> |
+  sha256sum | cut -d" " -f1) == <hash-of-secret> ]]`); the hash is computed in
+  Python and only the non-reversible hash reaches the retained
+  `pty-command-*.zsh` file. The synthetic value itself is sent through the PTY
+  only after the disabled-echo check, exactly as before.
+- **Centralized redaction:** new `Session.redact()` replaces every registered
+  synthetic value with `<redacted synthetic credential>`; `Session.text()`
+  delegates to it and all four `wait_for`/`wait_for_since` failure tails now
+  pass through it, so timeout/exit diagnostics recorded in
+  `pty-*.jsonl`/`report.*` cannot carry the value. Remaining surfaces (ZLE
+  buffer, probe files, static messages) cannot contain the secret because the
+  echo-disabled gate precedes any transmission; redaction there is
+  defense-in-depth.
+- Fault-injection tests: `test_session_diagnostics_redact_registered_values`
+  (a registered token printed to the terminal is redacted in a `wait_for`
+  failure message; fails on revert) and
+  `test_cgm_value_check_uses_a_hash_not_the_plaintext` (source asserts the
+  hash-based comparison and the absence of the old literal-comparison form).
+- Verified: review approved; full gate `20260912-215458-9601a735` = `YES`,
+  exit 0 with both cgm scenarios passing in both PTY repetitions.

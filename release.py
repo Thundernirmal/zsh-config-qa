@@ -270,7 +270,7 @@ def run_stage(name, argv, work, env, timeout, expected=None):
     start = time.monotonic()
     print(f'RUN  {name} (log: {log})', flush=True)
     with log.open('w') as stream:
-        p = subprocess.Popen(argv, cwd=PROJECT, env=stage_env, stdin=subprocess.DEVNULL,
+        p = subprocess.Popen(argv, cwd=work, env=stage_env, stdin=subprocess.DEVNULL,
                              stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         # Stage groups and separately grouped PTY/case children are all registered.
         with (work / 'processes.jsonl').open('a') as registry:

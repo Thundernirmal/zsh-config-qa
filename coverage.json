@@ -158,7 +158,11 @@
     "test_gate.GateTests.test_atomic_json_is_durable_and_honors_mode",
     "test_gate.GateTests.test_results_root_must_be_private",
     "test_gate.GateTests.test_session_check_does_not_leak_pipefail",
-    "test_gate.GateTests.test_scenario_session_is_closed_when_startup_fails"
+    "test_gate.GateTests.test_scenario_session_is_closed_when_startup_fails",
+    "test_gate.GateTests.test_session_diagnostics_redact_registered_values",
+    "test_gate.GateTests.test_cgm_value_check_uses_a_hash_not_the_plaintext",
+    "test_gate.GateTests.test_stage_commands_run_in_the_owned_run_directory",
+    "test_gate.GateTests.test_fbr_fixture_git_setup_is_bounded"
   ],
   "fzf": [
     "narrow-unicode",

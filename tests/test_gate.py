@@ -172,6 +172,40 @@ class GateTests(unittest.TestCase):
             self.assertEqual(before, run_probe(),
                              'Session.check() changed the shell top-level options')
 
+    def test_session_diagnostics_redact_registered_values(self):
+        pty=load_pty();home=self.work/'home'
+        common.make_home(home,self.repo,'PROMPT="QA> "\nbindkey -e\n')
+        with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
+            session=pty.Session(self.work/'scratch')
+            self.addCleanup(session.close)
+            session.sync()
+            session.redactions.append('qa-inert-secret-0123456789abcdef')
+            session.check('print "leak attempt: qa-inert-secret-0123456789abcdef"')
+            with self.assertRaises(AssertionError) as caught:
+                session.wait_for('definitely-missing-marker', timeout=0.5)
+            message = str(caught.exception)
+            self.assertNotIn('qa-inert-secret-0123456789abcdef', message)
+            self.assertIn('<redacted synthetic credential>', message)
+
+    def test_cgm_value_check_uses_a_hash_not_the_plaintext(self):
+        import hashlib
+        source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
+        self.assertIn('sha256sum', source)
+        self.assertNotRegex(source, r'== \{shlex\.quote\(secret\)\}')
+
+    def test_stage_commands_run_in_the_owned_run_directory(self):
+        import inspect
+        source = inspect.getsource(release.run_stage)
+        self.assertIn('cwd=work', source)
+        self.assertNotIn('cwd=PROJECT', source)
+
+    def test_fbr_fixture_git_setup_is_bounded(self):
+        source = (Path(__file__).resolve().parents[1]/'qa-pty.py').read_text()
+        start = source.index('def fbr_select')
+        body = source[start:source.index('def fkill_picker')]
+        self.assertIn('bounded(argv', body)
+        self.assertNotIn('subprocess.run(["git"', body)
+
     def test_scenario_session_is_closed_when_startup_fails(self):
         pty=load_pty()
         with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
