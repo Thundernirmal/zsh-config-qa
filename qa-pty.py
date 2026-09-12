@@ -269,7 +269,9 @@ class Session:
     def check(self, code: str, expected: int = 0, timeout: float = 30) -> str:
         token = uuid.uuid4().hex
         script = WORK / ('pty-command-' + token + '.zsh')
-        script.write_text('setopt LOCAL_OPTIONS PIPE_FAIL\n' + code + '\n')
+        # LOCAL_OPTIONS only restores inside a function scope; a top-level
+        # sourced script would leak PIPE_FAIL into the session under test.
+        script.write_text('__qa_check() {\nsetopt LOCAL_OPTIONS PIPE_FAIL\n' + code + '\n}\n__qa_check\n')
         offset = len(self.output)
         self.sendline(f'source {shlex.quote(str(script))}; qa_rc=$?; print -r -- "QA-${{:-RESULT}}-{token}:$qa_rc"')
         prefix = 'QA-RESULT-' + token + ':'
@@ -369,7 +371,9 @@ def run(name: str, fn) -> None:
 
 
 def fresh_zsh() -> Session:
-    session = Session(SCRATCH)
+    # --sync: fzf renders only after stdin EOF, so a rendered frame
+    # guarantees the whole item list is loaded before any keys are sent.
+    session = Session(SCRATCH, extra_env={'FZF_DEFAULT_OPTS': ' --sync'})
     try:
         session.sync(timeout=45)
         session.check('[[ $_ZSH_FUNCTIONS_MODULE_DIR == ' + shlex.quote(str(REPO)) + ' ]]')
@@ -377,6 +381,21 @@ def fresh_zsh() -> Session:
         session.close()
         raise
     return session
+
+
+def confirm_query(session: Session, query: str, timeout: float = 10.0) -> None:
+    """Type a picker filter and wait until fzf has consumed it.
+
+    fzf echoes the query in its prompt line, so waiting for the literal query
+    (including any ^/$ anchors, which only the echo contains) proves the filter
+    was applied. The scenario sessions run fzf with --sync, so the frame only
+    appears after the whole item list was loaded; input bytes are processed in
+    order, so an Enter sent after this point selects over the full, filtered
+    list instead of racing the item stream.
+    """
+    session.send(query)
+    session.wait_for(query, timeout=timeout)
+    time.sleep(0.2)
 
 
 def close_picker(session: Session, clear_line: bool = False) -> None:
@@ -400,8 +419,8 @@ def probe_shell(extra_env: dict[str, str], shell_code: str, name: str) -> str:
     PROBE_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROBE_FILE.unlink(missing_ok=True)
     session = Session(SCRATCH, extra_env=extra_env)
-    session.sync(timeout=45)
     try:
+        session.sync(timeout=45)
         session.check(f"{{ {shell_code} }} > {shlex.quote(str(PROBE_FILE))}")
     finally:
         session.close()
@@ -429,8 +448,8 @@ def nounset_startup() -> None:
     home = WORK / "nounset-home"
     make_home(home, 'setopt NO_UNSET\nsource "$HOME/.config/zsh/init.zsh"\n')
     session = Session(SCRATCH, home=str(home), zdotdir=str(home))
-    session.sync(timeout=45)
     try:
+        session.sync(timeout=45)
         PROBE_FILE.parent.mkdir(parents=True, exist_ok=True)
         PROBE_FILE.unlink(missing_ok=True)
         session.check(
@@ -449,9 +468,10 @@ def fzf_cold_start() -> None:
     """An empty cache must be rebuilt and a prompt must appear cleanly."""
     cache = QAHOME / ".cache" / "zsh" / "fzf"
     shutil.rmtree(cache, ignore_errors=True)
-    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME))
-    session.sync(timeout=45)
+    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME),
+                      extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         files = sorted(cache.glob("integration-*.zsh"))
         assert files, "cold start did not create an fzf integration cache"
         text = session.text()
@@ -465,9 +485,10 @@ def fzf_warm_start() -> None:
     cache = QAHOME / ".cache" / "zsh" / "fzf"
     before = {path.name: path.stat().st_mtime_ns for path in cache.glob("integration-*.zsh")}
     assert before, "warm-start check needs a cold start first"
-    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME))
-    session.sync(timeout=45)
+    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME),
+                      extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         after = {path.name: path.stat().st_mtime_ns for path in cache.glob("integration-*.zsh")}
         assert after == before, "warm start regenerated the fzf integration cache"
     finally:
@@ -482,8 +503,8 @@ def fzf_blocked() -> None:
     fake.chmod(0o755)
     env = {"PATH": str(FAKEBIN) + os.pathsep + os.environ["PATH"]}
     session = Session(SCRATCH, extra_env=env)
-    session.sync(timeout=45)
     try:
+        session.sync(timeout=45)
         text = session.text()
         assert "fzf 0.68.0 or newer is required" in text, "minimum-version diagnostic missing"
         session.clear_output()
@@ -574,8 +595,7 @@ def ctrl_t_insert() -> None:
         session.clear_output()
         session.send(b"\x14")
         session.wait_for("Files", timeout=15)
-        session.send("a.txt")
-        time.sleep(0.5)
+        confirm_query(session, "a.txt$")
         session.send(b"\r")
         session.wait_no_fzf(timeout=8)
         session.wait_for_zle()
@@ -653,13 +673,12 @@ def zhelp_queue() -> None:
         session.sendline("zhelp")  # no seed query: type the target inside the palette
         session.wait_for("Commands", timeout=15)
         time.sleep(0.3)
-        session.send("upkg-plan")
-        time.sleep(0.5)
+        confirm_query(session, "upkg-plan$")
         session.send(b"\r")  # queue the focused example
         session.wait_no_fzf(timeout=10)
         session.wait_for_zle()
         words = shlex.split(session.capture_buffer())
-        assert words[:2] == ['upkg', 'plan'], f'wrong queued buffer: {words}'
+        assert words == ['upkg', 'plan'], f'wrong queued buffer: {words}'
         session.send(b"\x03")  # clear the queued buffer without running it
         session.wait_for_zle()
         time.sleep(0.3)
@@ -669,9 +688,9 @@ def zhelp_queue() -> None:
 
 
 def fbr_picker() -> None:
-    session = Session(GITREPO)
-    session.sync(timeout=45)
+    session = Session(GITREPO, extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         session.clear_output()
         session.sendline("fbr")
         session.wait_for("Branches", timeout=20)
@@ -687,14 +706,13 @@ def fbr_select() -> None:
     subprocess.run(["git", "-C", str(GITREPO), "checkout", "-q", "--detach"], check=True)
     subprocess.run(["git", "-C", str(GITREPO), "branch", "-f", "qa-feature"], check=True)
 
-    session = Session(GITREPO)
-    session.sync(timeout=45)
+    session = Session(GITREPO, extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         session.clear_output()
         session.sendline("fbr")
         session.wait_for("Branches", timeout=20)
-        session.send("qa-feature")
-        time.sleep(0.5)
+        confirm_query(session, "qa-feature$")
         session.send(b"\r")
         # Verify HEAD directly; typed follow-up commands race the widget.
         head = GITREPO / ".git" / "HEAD"
@@ -711,6 +729,9 @@ def fbr_select() -> None:
 
 
 def fkill_picker() -> None:
+    """Open fkill and cancel: the registered dummy must survive untouched."""
+    dummy = subprocess.Popen(["sleep", "600"], start_new_session=True)
+    register_process(dummy.pid)
     session = fresh_zsh()
     try:
         session.clear_output()
@@ -718,8 +739,13 @@ def fkill_picker() -> None:
         session.wait_for("Processes", timeout=20)
         close_picker(session)  # cancel: never send a signal
         assert "Processes" in session.text(), "Processes frame never rendered"
+        assert dummy.poll() is None, "cancel path signalled the dummy process"
+        assert "sent SIGTERM" not in session.text(), "cancel path printed a signal confirmation"
     finally:
         session.close()
+        if dummy.poll() is None:
+            dummy.kill()
+            dummy.wait()
 
 
 def fkill_signal() -> None:
@@ -727,13 +753,12 @@ def fkill_signal() -> None:
     dummy = subprocess.Popen(["sleep", "600"], start_new_session=True)
     register_process(dummy.pid)
     session = fresh_zsh()
-    session.check('FZF_DEFAULT_OPTS+=" --nth=1"')
     try:
+        session.check('FZF_DEFAULT_OPTS+=" --nth=1"')
         session.clear_output()
         session.sendline("fkill")
         session.wait_for("Processes", timeout=20)
-        session.send("^" + str(dummy.pid) + "$")
-        time.sleep(0.5)
+        confirm_query(session, "^" + str(dummy.pid) + "$")
         session.send(b"\r")
         # Wait for fkill's own confirmation line, then verify the process died.
         session.wait_for(f"sent SIGTERM to {dummy.pid}", timeout=15)
@@ -763,9 +788,9 @@ def zi_picker() -> None:
 
 
 def zi_select() -> None:
-    session = Session(WORK)
-    session.sync(timeout=45)
+    session = Session(WORK, extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         session.sendline(f"zoxide add {shlex.quote(str(SCRATCH))}")
         session.sync()
         session.clear_output()
@@ -797,9 +822,10 @@ def cgm_roundtrip(no_color=False) -> None:
         stream.write(json.dumps({'name': name}) + '\n')
         stream.flush()
         os.fsync(stream.fileno())
-    session = Session(SCRATCH, extra_env={'NO_COLOR': '1'} if no_color else {})
-    session.redactions.append(secret)
+    session = None
     try:
+        session = Session(SCRATCH, extra_env={'NO_COLOR': '1'} if no_color else {})
+        session.redactions.append(secret)
         session.sync(timeout=45)
         session.clear_output()
         session.sendline('cgm set ' + name)
@@ -812,7 +838,7 @@ def cgm_roundtrip(no_color=False) -> None:
         session.send(secret + '\r')
         session.wait_for('Saved ' + name if no_color else 'Credential Saved', timeout=20)
         session.sync()
-        session.check('cgm list | command grep -q ' + shlex.quote(name))
+        session.check('cgm list > "$HOME/cgm-list" && command grep -q ' + shlex.quote(name) + ' "$HOME/cgm-list"')
         session.check(f'cgm env {name} && [[ ${name} == {shlex.quote(secret)} ]]')
         session.check(f'cgm unset {name} && (( ! $+parameters[{name}] ))')
         session.clear_output()
@@ -824,7 +850,8 @@ def cgm_roundtrip(no_color=False) -> None:
         check = bounded(['secret-tool', 'lookup', 'application', 'cgm', 'variable', name], timeout=20)
         assert check.returncode == 1 and not check.stderr.strip(), 'credential still stored or backend unavailable'
     finally:
-        session.close()
+        if session is not None:
+            session.close()
         # Only this unique synthetic name is touched; values never enter logs.
         bounded(['secret-tool', 'clear', 'application', 'cgm', 'variable', name], timeout=20)
         check = bounded(['secret-tool', 'lookup', 'application', 'cgm', 'variable', name], timeout=20)
@@ -884,9 +911,10 @@ def npkg_remove_picker() -> None:
     assert "hello" in seeded_elements, "hello missing after seeding"
     (WORK / "nix-remove-before.json").write_text(json.dumps(seeded_elements, indent=2))
 
-    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME))
-    session.sync(timeout=45)
+    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME),
+                      extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         session.clear_output()
         session.sendline("npkg remove")
         session.wait_for("Installed packages", timeout=20)
@@ -900,15 +928,15 @@ def npkg_remove_picker() -> None:
 
 def npkg_add_picker() -> None:
     empty_profile()  # so a pre-existing cowsay cannot make the check pass vacuously
-    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME))
-    session.sync(timeout=45)
+    session = Session(SCRATCH, home=str(QAHOME), zdotdir=str(QAHOME),
+                      extra_env={"FZF_DEFAULT_OPTS": " --sync"})
     try:
+        session.sync(timeout=45)
         session.clear_output()
         session.sendline("npkg add")
         # The first run builds the nixpkgs attribute cache; this can take a while.
         session.wait_for("Packages", timeout=300)
-        session.send("cowsay")
-        time.sleep(0.5)
+        confirm_query(session, "cowsay$")
         session.send(b"\r")
         wait_profile(lambda elements: "cowsay" in elements, timeout=300, description="cowsay install")
         (WORK / "nix-add-after.json").write_text(json.dumps(profile_elements(), indent=2))
@@ -926,10 +954,10 @@ SCENARIOS: dict[str, tuple] = {
     "env-no-color": (env_no_color, "NO_COLOR reaches pickers"),
     "env-extra-opts": (env_extra_opts, "ZSH_FZF_EXTRA_OPTS is appended"),
     "env-inherited-opts": (env_inherited_opts, "inherited fzf options are preserved"),
-    "env-layout-compact": (env_layout_compact, "compact layout frame and preview"),
-    "env-layout-roomy": (env_layout_roomy, "roomy layout frame and preview"),
-    "env-layout-minimal": (env_layout_minimal, "minimal layout frame and preview"),
-    "ctrl-t": (ctrl_t_picker, "Ctrl+T opens the Files picker and toggles previews"),
+    "env-layout-compact": (env_layout_compact, "compact layout options applied to the pickers"),
+    "env-layout-roomy": (env_layout_roomy, "roomy layout options applied to the pickers"),
+    "env-layout-minimal": (env_layout_minimal, "minimal layout options applied to the pickers"),
+    "ctrl-t": (ctrl_t_picker, "Ctrl+T opens the Files picker and sends preview/wrap toggle keys"),
     "ctrl-t-insert": (ctrl_t_insert, "Ctrl+T inserts the selected path"),
     "ctrl-r": (ctrl_r_picker, "Ctrl+R opens the History picker"),
     "alt-c": (alt_c_picker, "Alt+C opens the Directories picker"),
@@ -938,7 +966,7 @@ SCENARIOS: dict[str, tuple] = {
     "zhelp-queue": (zhelp_queue, "zhelp queues the selected example"),
     "fbr": (fbr_picker, "fbr opens the Branches picker"),
     "fbr-select": (fbr_select, "fbr checks out the selected branch"),
-    "fkill": (fkill_picker, "fkill opens the Processes picker and cancels safely"),
+    "fkill": (fkill_picker, "fkill opens the Processes picker and cancels without signalling"),
     "fkill-signal": (fkill_signal, "fkill sends SIGTERM to the selected PID"),
     "zi": (zi_picker, "zi opens the zoxide Directories picker"),
     "zi-select": (zi_select, "zi changes directory after selection"),

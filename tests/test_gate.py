@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -140,6 +141,51 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(AssertionError):session.check('false')
             self.assertEqual(session.last_status,1)
             session.check('true')
+
+    def test_session_check_does_not_leak_pipefail(self):
+        import shlex
+        pty=load_pty();home=self.work/'home'
+        probe = self.work/'pipe-state'
+        rc = ('PROMPT="QA> "\nbindkey -e\n'
+              '__qa_pipe_probe() { print -rn -- "$options[pipefail]" > ' + shlex.quote(str(probe)) + '; }\n')
+        common.make_home(home,self.repo,rc)
+        with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
+            session=pty.Session(self.work/'scratch')
+            self.addCleanup(session.close)
+            session.sync()
+            # The check body itself still runs under PIPE_FAIL by design.
+            session.check('[[ -o pipefail ]]')
+            # Baseline is captured at the shell's top level before any check
+            # could have leaked an option; the value itself is not asserted.
+            def run_probe():
+                probe.unlink(missing_ok=True)
+                session.sendline('__qa_pipe_probe')
+                deadline = time.monotonic() + 10
+                while not probe.exists():
+                    assert time.monotonic() < deadline, 'pipe probe did not run'
+                    ready, _, _ = select.select([session.master], [], [], 0.05)
+                    if ready:
+                        session.read_available()
+                return probe.read_text()
+            before = run_probe()
+            session.check('true')
+            self.assertEqual(before, run_probe(),
+                             'Session.check() changed the shell top-level options')
+
+    def test_scenario_session_is_closed_when_startup_fails(self):
+        pty=load_pty()
+        with patch.object(pty,'WORK',self.work),patch.object(pty,'REPO',self.repo):
+            closed=[]
+            class FailingStartup:
+                def __init__(self,*args,**kwargs):pass
+                def sync(self,*args,**kwargs):raise AssertionError('startup hung')
+                def close(self):closed.append(True)
+            for scenario in (pty.nounset_startup, pty.env_no_color):
+                closed.clear()
+                with patch.object(pty,'Session',FailingStartup):
+                    with self.assertRaises(AssertionError):
+                        scenario()
+                self.assertTrue(closed, f'{scenario.__name__} leaked its session')
 
     def test_fingerprint_changes_on_uncommitted_edit(self):
         subprocess.run(['git','init','-q',str(self.repo)],check=True)

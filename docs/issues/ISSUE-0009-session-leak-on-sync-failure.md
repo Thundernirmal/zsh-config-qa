@@ -1,6 +1,6 @@
 # ISSUE-0009: Scenarios constructing `Session` before `try/finally` leak the PTY/zsh when `sync()` fails
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** resource-lifecycle
 - **Affected:** `qa-pty.py:414-415`, `443-444`, `464-465`, `480-481`, `496-497`, `684-685`, `702-703`, `778-779`, `899-900`, `915-916`; correct pattern at `qa-pty.py:383-391` (`fresh_zsh`)
@@ -78,3 +78,20 @@ Because `Session` already supports the context-manager protocol, the most robust
 
 - Fault-injection test: point one scenario's HOME at a `.zshrc` that sleeps (as in the reproduction), call the scenario through `run()`, and assert (a) the scenario is recorded as `fail` and (b) the driver has no remaining interactive-zsh child after `run()` returns (check `/proc` descendants or the registered PID registry is empty).
 - Re-run `./run-all.zsh pty` twice and confirm pass counts and `wait_children_empty` behavior are unchanged.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- Every scenario that opens a `Session` now closes it when startup fails:
+  `sync()` moved inside `try/finally` at `probe_shell`, `nounset_startup`,
+  `fzf_cold_start`, `fzf_warm_start`, `fzf_blocked`, `fbr_picker`,
+  `fbr_select`, `zi_select`, `npkg_remove_picker`, and `npkg_add_picker`;
+  `cgm_roundtrip` creates the session inside the try with a `None` guard so
+  the credential cleanup still runs when `Session()` itself raises
+  (`fresh_zsh` already closed on failure).
+- Fault-injection test: `test_scenario_session_is_closed_when_startup_fails`
+  (fake `Session` whose `sync()` raises; asserts `nounset_startup` and
+  `env_no_color` call `close()`; fails on revert).
+- Verified: full gate `20260912-213912-57c5679f` = `YES`, exit 0. Review note:
+  fkill-signal's one pre-try `check()` was also moved inside its try in this
+  batch.

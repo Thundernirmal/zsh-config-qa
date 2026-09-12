@@ -1,6 +1,6 @@
 # ISSUE-0010: `zhelp-queue` assertion `words[:2]` also accepts the usage template
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** evidence-integrity
 - **Affected:** `qa-pty.py:674`; target registry `lib/command-registry.zsh:106`
@@ -87,3 +87,15 @@ assert words == ['upkg', 'plan'] and not any(ch in session.capture_buffer() for 
 - Re-run `./run-all.zsh pty` and confirm `zhelp-queue` still passes with the exact-equality assertion.
 - Fault-injection: queue the usage template in a controlled experiment (e.g. patch the ZLE buffer probe to return `upkg plan [--only <list>]`) and assert the strengthened check fails while the old `words[:2]` form passes.
 - Keep `coverage.json`'s `zhelp-queue` identity unchanged.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- `zhelp_queue` now asserts the exact queued buffer
+  (`words == ['upkg', 'plan']`), so queueing the usage template
+  `upkg plan [--only <list>]` can no longer satisfy the scenario. The recorded
+  evidence (ZLE buffer files) shows the real queue is exactly the example.
+- No new self-test identity (scenario change covered by the pty stage; the
+  exactness follows from the existing buffer-probe machinery).
+- Verified: full gate `20260912-213912-57c5679f` = `YES`, exit 0 with both PTY
+  repetitions passing.

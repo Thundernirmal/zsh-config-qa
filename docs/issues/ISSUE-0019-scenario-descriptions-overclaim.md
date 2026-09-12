@@ -1,6 +1,6 @@
 # ISSUE-0019: Scenario descriptions overclaim relative to what is asserted (`fkill` "cancels safely", `ctrl-t` "toggles previews", layout "frame and preview")
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** contract-drift
 - **Affected:** `qa-pty.py:953` with `qa-pty.py:725-734`; `qa-pty.py:944` with `qa-pty.py:567-579`; `qa-pty.py:941-943` with `qa-pty.py:543-562`
@@ -86,3 +86,20 @@ The release report and `--list` inventory state behaviors that were never verifi
 - Mutation check: in a scratch copy/experiment, stub the fkill ESC path to send a signal and confirm the strengthened scenario fails while the current one passes; similarly strip the Ctrl-P binding and confirm the strengthened ctrl-t scenario fails.
 - Re-run `./run-all.zsh pty` (both repetitions) and confirm `fkill`, `fkill-signal`, `ctrl-t`, and `ctrl-t-insert` all pass with the stronger assertions.
 - If descriptions change, verify `python3 qa-pty.py --list` output and any README wording that references the scenarios.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- **fkill cancel:** `fkill_picker` now registers a real dummy `sleep` before
+  opening the picker, cancels with ESC, and asserts the dummy is still alive
+  and no "sent SIGTERM" text appeared — the cancel path can no longer pass if
+  it accidentally signalled a process. Description updated to "cancels without
+  signalling".
+- **ctrl-t:** description narrowed to "opens the Files picker and sends
+  preview/wrap toggle keys" (no effect assertion is available for the toggles;
+  the overclaim is gone).
+- **layout scenarios:** descriptions narrowed to "compact/roomy/minimal layout
+  options applied to the pickers" — they assert the exported option strings,
+  which is what the scenarios actually verify.
+- Verified: full gate `20260912-213912-57c5679f` = `YES`, exit 0 (both
+  repetitions, including the strengthened fkill cancel path).

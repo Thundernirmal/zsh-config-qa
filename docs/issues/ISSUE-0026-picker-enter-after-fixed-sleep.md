@@ -1,6 +1,6 @@
 # ISSUE-0026: Picker-select scenarios press Enter after fixed sleeps without confirming the filter; `fkill-signal` can signal the wrong process
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** flaky
 - **Affected:** `qa-pty.py:589-591` (`ctrl-t-insert`), `qa-pty.py:666-670` (`zhelp-queue`), `qa-pty.py:709-710` (`fbr-select`), `qa-pty.py:748-749` (`fkill-signal`), `qa-pty.py:923-924` (`npkg-add`)
@@ -100,3 +100,26 @@ remain as a settle aid but must not be the readiness proof.
   appears; add its identity to `coverage.json` under `selftest` if it becomes a
   named harness test.
 - Re-run `./run-all.zsh pty` (both repetitions) after the change.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- Two-part synchronization fix:
+  1. `confirm_query(session, query)` types the anchored filter
+     (`a.txt$`, `upkg-plan$`, `qa-feature$`, `^<pid>$`, `cowsay$`) and waits
+     for the literal echo in fzf's prompt line — the anchors cannot be matched
+     by list rows and every call site clears output first, so the echo proves
+     the filter bytes were consumed. Enter is then sent in order, after the
+     filter. Fixed sleeps no longer stand in for readiness.
+  2. Picker sessions run fzf with `FZF_DEFAULT_OPTS=' --sync'`
+     (`fresh_zsh()` and the direct select-path sessions), so the frame only
+     renders after stdin EOF — a rendered frame guarantees the whole item
+     list is loaded. Together: Enter selects over the full, filtered list and
+     cannot land ahead of it. This directly fixes the observed failures:
+     npkg-add installed nothing when Enter raced the 100k-item stream, and
+     fbr-select raced its tiny list.
+- Chosen over a raw-byte "rendered entry" proof after live testing: fzf's
+  incremental redraws do not re-emit row bytes reliably, so byte counting was
+  fragile; `--sync` + echo is deterministic and does not modify the target.
+- Verified: two consecutive PTY repetitions pass all 28 scenarios; full gate
+  `20260912-213912-57c5679f` = `YES`, exit 0.

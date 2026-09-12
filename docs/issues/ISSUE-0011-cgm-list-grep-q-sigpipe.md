@@ -1,6 +1,6 @@
 # ISSUE-0011: `cgm list | command grep -q <name>` is an early-exiting-consumer SIGPIPE hazard under `PIPE_FAIL`
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** flaky
 - **Affected:** `qa-pty.py:827` (safe counterpart at `qa-pty.py:835`)
@@ -68,3 +68,14 @@ session.check('cgm list > "$HOME/cgm-list" && command grep -q ' + shlex.quote(na
 
 - Re-run `./run-all.zsh pty` and confirm `cgm` and `cgm-no-color` still pass with the rewritten presence check.
 - Optional harness self-test: a child shell under `PIPE_FAIL` runs `big-producer | grep -q` (expect 141) and the capture-then-grep form (expect 0); asserts the safe pattern is what the scenario uses. A static test can fail if `cgm list |` reappears in `qa-pty.py`.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- The presence check now uses the same redirect-to-file form as the absence
+  check: `cgm list > "$HOME/cgm-list" && command grep -q <name>
+  "$HOME/cgm-list"` — the early-exiting `grep -q` consumer no longer sits in a
+  pipeline where the producer can die of SIGPIPE under `PIPE_FAIL` (the
+  AGENTS.md:123 hazard). The file lands in the owned isolated HOME.
+- Verified: full gate `20260912-213912-57c5679f` = `YES`, exit 0; both cgm
+  scenarios pass in both PTY repetitions.

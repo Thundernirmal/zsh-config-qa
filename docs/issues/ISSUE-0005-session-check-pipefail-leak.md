@@ -1,6 +1,6 @@
 # ISSUE-0005: `Session.check()` leaks `PIPE_FAIL` into the interactive shell under test
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** test-fidelity
 - **Affected:** `qa-pty.py:281-295` (write at `qa-pty.py:284`)
@@ -94,3 +94,20 @@ Alternatively record `[[ -o pipefail ]]` before sourcing and restore it afterwar
 - Add a fault-injection test beside `test_pty_assertion_cannot_pass_from_echo` in `tests/test_gate.py`: start a `Session`, capture `[[ -o pipefail ]]`, run `session.check('true')`, and assert the option is still unset (and that a deliberate pipeline failure inside a second `check('false | true')` is still detected while pipefail is active inside the body).
 - Keep a unit-level regression for the sourced-snippet semantics (parts a/b above) if a pure-PTY test is too slow.
 - Re-run `./run-all.zsh pty` (both repetitions) and confirm the credential and buffer-probe scenarios are unaffected.
+
+## Fix (2026-09-12, batch 4)
+
+- **Status change:** Open → Fixed.
+- `Session.check()` now wraps every command body in
+  `__qa_check() { setopt LOCAL_OPTIONS PIPE_FAIL; <body> }; __qa_check`, so the
+  body still runs under `PIPE_FAIL` while the option is restored on return.
+  Body exit status and the anti-echo `qa_rc` reporting are unchanged; no check
+  body relied on top-level option persistence (fkill-signal's
+  `FZF_DEFAULT_OPTS+=" --nth=1"` was verified to persist as a global scalar).
+- Fault-injection test: `test_session_check_does_not_leak_pipefail` — defines
+  the probe in the session's own `.zshrc`, captures the shell's top-level
+  `pipefail` state before any `check()` runs, and asserts it is unchanged
+  afterwards (no source/state conflation; fails on revert, when the first
+  `check()` leaks).
+- Verified: review approved (revert experiment reproduced the leak); full gate
+  `20260912-213912-57c5679f` = `YES`, exit 0.

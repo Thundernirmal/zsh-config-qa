@@ -156,7 +156,9 @@
     "test_gate.GateTests.test_cleanup_reports_unverified_leaderless_group",
     "test_gate.GateTests.test_cleanup_rejects_unusable_path_cleanly",
     "test_gate.GateTests.test_atomic_json_is_durable_and_honors_mode",
-    "test_gate.GateTests.test_results_root_must_be_private"
+    "test_gate.GateTests.test_results_root_must_be_private",
+    "test_gate.GateTests.test_session_check_does_not_leak_pipefail",
+    "test_gate.GateTests.test_scenario_session_is_closed_when_startup_fails"
   ],
   "fzf": [
     "narrow-unicode",
