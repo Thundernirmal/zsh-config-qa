@@ -1,6 +1,6 @@
 # ISSUE-0025: Ungated safe-sweep cases turn missing optional tools into NO instead of INCOMPLETE
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** contract-drift
 - **Affected:** `run-safe.zsh:140` (`ports` needs `ss`), `run-safe.zsh:109-110` (`extract zip` needs `unzip`), `run-safe.zsh:147` (`zdoctor` needs `curl`, `lsd`, `ss`, `zoxide`), `run-safe.zsh:149` (`zdoctor --network --secrets` needs `curl`, `secret-tool`), `release.py:54-67` (tool metadata omits these)
@@ -99,3 +99,24 @@ require is absent.
   the stage is `incomplete`, not `fail`.
 - Repeat for `unzip` against the `extract zip` case.
 - Full gate re-run on this host must stay `YES` (all tools present).
+
+## Fix (2026-09-12, batch 5)
+
+- **Status change:** Open → Fixed.
+- New `qa_opt_nz` helper (skip-on-missing-tool, nonempty-stdout case) and an
+  optional `needs` argument for `qa_fixture`; case names and records-once
+  semantics unchanged:
+  - `ports` gated on `ss` (was a hard `command not found` → NO);
+  - `extract zip` gated on `unzip` via `qa_fixture ... unzip`;
+  - `zdoctor` gated on `curl lsd ss zoxide` — the review constraint is honored
+    by recording prerequisite incompleteness as a **skip with the tool named**
+    on tool-less hosts (documented INCOMPLETE contract) while keeping full
+    diagnostic coverage wherever the tools exist;
+  - `zdoctor --network --secrets` gated on `curl lsd ss zoxide secret-tool`
+    (the doctor exits 1 on any missing required tool regardless of flags).
+  Review caught that the first commit gated only the network variant; the
+  plain `zdoctor` line was fixed in the same batch before commit.
+- `release.tool_metadata` now probes `ss`, `unzip`, `lsd`, and `curl` so any
+  future hard failure names the binaries in the report.
+- Verified: full gate `20260912-215025-6c8985a5` = `YES`, exit 0, safe 63/63
+  pass; a tool-less host now yields recorded skips and an `INCOMPLETE` run.

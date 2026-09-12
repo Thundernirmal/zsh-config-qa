@@ -72,7 +72,8 @@ def harness_identity():
 def tool_metadata(env):
     """Probe installed tools; never fail the run over one broken binary."""
     result={}
-    for tool in ['zsh','fzf','git','python3','nix','jq','secret-tool','zoxide','pacman']:
+    for tool in ['zsh','fzf','git','python3','nix','jq','secret-tool','zoxide','pacman',
+                 'ss','unzip','lsd','curl']:
         path=shutil.which(tool, path=env.get('PATH'))
         if not path:
             result[tool]={'available':False}

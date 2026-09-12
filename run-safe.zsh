@@ -23,8 +23,8 @@ typeset -r repo_dir=${ZSH_CONFIG_DIR:-$HOME/.config/zsh}
 typeset -gi n_pass=0 n_fail=0 n_skip=0
 typeset -ga failures
 
-if [[ ! -d $scratch ]]; then
-  print -u2 -r -- "fatal: fixtures missing under $scratch; run ./setup-fixtures.zsh first"
+if [[ ! -d $scratch || -L $scratch ]]; then
+  print -u2 -r -- "fatal: fixtures missing under $scratch (or it is a symlink); run ./setup-fixtures.zsh first"
   exit 2
 fi
 if [[ ! -r $repo_dir/init.zsh ]]; then
@@ -65,9 +65,29 @@ qa_opt() {
   qa "$name" "$code" "$envvar"
 }
 
-# qa_fixture NAME FILE CODE -- skip when a fixture archive is absent
+# qa_opt_nz NAME "tool1 tool2" CODE [ENV] -- qa_opt with a nonempty-stdout check
+qa_opt_nz() {
+  local name=$1 needs=$2 code=$3 envvar=${4-}
+  local tool
+  for tool in ${=needs}; do
+    if (( ! $+commands[$tool] )); then
+      qa_skip "$name" "missing $tool"
+      return 0
+    fi
+  done
+  qa_nz "$name" "$code" "$envvar"
+}
+
+# qa_fixture NAME FILE CODE [NEEDS] -- skip when a fixture archive or a required tool is absent
 qa_fixture() {
-  local name=$1 file=$2 code=$3
+  local name=$1 file=$2 code=$3 needs=${4-}
+  local tool
+  for tool in ${=needs}; do
+    if (( ! $+commands[$tool] )); then
+      qa_skip "$name" "missing $tool"
+      return 0
+    fi
+  done
   if [[ ! -e $scratch/$file ]]; then
     qa_skip "$name" "missing fixture ${file:t}"
     return 0
@@ -107,7 +127,7 @@ qa_nz 'dusage'      'dusage . 5'
 qa_nz 'bigfiles'    'bigfiles files 5'
 qa 'extract tar.gz' 'rm -rf out && mkdir out && extract --destination out files/sample.tar.gz && [[ -f out/archive-src.txt ]]'
 qa_fixture 'extract zip' files/sample.zip \
-  'rm -rf out-zip && mkdir out-zip && extract --destination out-zip files/sample.zip && [[ -f out-zip/z.txt ]]'
+  'rm -rf out-zip && mkdir out-zip && extract --destination out-zip files/sample.zip && [[ -f out-zip/z.txt ]]' unzip
 qa_fixture 'extract tar.xz' files/sample.tar.xz \
   'rm -rf out-xz && mkdir out-xz && extract --destination out-xz files/sample.tar.xz && [[ -f out-xz/archive-src.txt ]]'
 qa_fixture 'extract tar.bz2' files/sample.tar.bz2 \
@@ -137,16 +157,16 @@ else
   qa_skip 'headers' 'QA_SKIP_NETWORK=1'
   qa_skip 'myip'    'QA_SKIP_NETWORK=1'
 fi
-qa_nz 'ports'       'ports'
+qa_opt_nz 'ports'   ss 'ports'
 qa_nz 'path'        'path'
 qa 'fanprofile help' 'fanprofile --help | grep Usage'
 
 print -r -- '== Meta =='
 qa_nz 'tips'        'tips'
 qa_nz 'zhelp plain' 'zhelp --plain package'
-qa_nz 'zdoctor'     'zdoctor'
+qa_opt_nz 'zdoctor' 'curl lsd ss zoxide' 'zdoctor'
 if network_enabled; then
-  qa 'zdoctor --network --secrets' 'zdoctor --network --secrets'
+  qa_opt_nz 'zdoctor --network --secrets' 'curl lsd ss zoxide secret-tool' 'zdoctor --network --secrets'
 else
   qa_skip 'zdoctor --network --secrets' 'QA_SKIP_NETWORK=1'
 fi
@@ -156,8 +176,8 @@ qa 'G alias'        '[[ $(print "aaa\nbbb" G bbb) == bbb ]]' 'ZSH_GLOBAL_ALIASES
 qa 'W alias'        '[[ $(print "aaa\nbbb" W) == 2 ]]' 'ZSH_GLOBAL_ALIASES=1'
 qa 'H alias'        '[[ $(print -l {1..15} H) == $(print -l {1..10}) ]]' 'ZSH_GLOBAL_ALIASES=1'
 qa 'T alias'        '[[ $(print -l {1..15} T) == $(print -l {6..15}) ]]' 'ZSH_GLOBAL_ALIASES=1'
-qa 'L alias'        'print "aaa\nbbb" L >/dev/null' 'ZSH_GLOBAL_ALIASES=1'
-qa 'NE alias'       'command false NE; (( $? == 1 ))' 'ZSH_GLOBAL_ALIASES=1'
+qa 'L alias'        '[[ -n ${galiases[L]} && $(print -l {1..3} L | wc -l) -eq 3 ]]' 'ZSH_GLOBAL_ALIASES=1'
+qa 'NE alias'       '[[ -n ${galiases[NE]} && $( print -r -- x NE ) == x ]]' 'ZSH_GLOBAL_ALIASES=1'
 qa 'NUL alias'      '[[ -z $(print hello NUL) ]]' 'ZSH_GLOBAL_ALIASES=1'
 
 print -r -- '== Theme =='

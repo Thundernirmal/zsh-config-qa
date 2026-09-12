@@ -21,8 +21,8 @@ typeset -r repo_dir=${ZSH_CONFIG_DIR:-$HOME/.config/zsh}
 typeset -gi n_pass=0 n_fail=0
 typeset -ga failures
 
-if [[ ! -d $scratch ]]; then
-  print -u2 -r -- "fatal: fixtures missing under $scratch; run ./setup-fixtures.zsh first"
+if [[ ! -d $scratch || -L $scratch ]]; then
+  print -u2 -r -- "fatal: fixtures missing under $scratch (or it is a symlink); run ./setup-fixtures.zsh first"
   exit 2
 fi
 
@@ -42,9 +42,9 @@ for theme in catppuccin-mocha catppuccin-latte nord gruvbox-dark terminal; do
 done
 
 print -r -- '== Glyph modes =='
-check 'NO_NERD_FONT becomes unicode' 'ztheme current | grep -i unicode' 'NO_NERD_FONT=1'
-check 'glyphs ascii tier' 'ztheme current | grep -i ascii' 'ZSH_UI_GLYPHS=ascii'
-check 'LC_ALL=C auto becomes ascii' 'ztheme current | grep -i ascii' 'LC_ALL=C ZSH_UI_GLYPHS=auto'
+check 'NO_NERD_FONT becomes unicode' 'ztheme current > "$HOME/glyphs.out" && command grep -q "^glyphs: unicode" "$HOME/glyphs.out"' 'NO_NERD_FONT=1'
+check 'glyphs ascii tier' 'ztheme current > "$HOME/glyphs.out" && command grep -q "^glyphs: ascii" "$HOME/glyphs.out"' 'ZSH_UI_GLYPHS=ascii'
+check 'LC_ALL=C auto becomes ascii' 'ztheme current > "$HOME/glyphs.out" && command grep -q "^glyphs: ascii" "$HOME/glyphs.out"' 'LC_ALL=C ZSH_UI_GLYPHS=auto'
 
 print -r -- '== Custom palettes =='
 check 'complete custom palette applies' 'typeset -gA ZSH_UI_CUSTOM_COLORS; for role in "${_ZSH_UI_THEME_ROLES[@]}"; do ZSH_UI_CUSTOM_COLORS[$role]=101010; done; ZSH_UI_CUSTOM_COLORS[accent]=abcdef; ZSH_UI_THEME=custom; _zsh_theme_resolve_settings && _fzf_require_ready && [[ $FZF_DEFAULT_OPTS == *abcdef* ]]'

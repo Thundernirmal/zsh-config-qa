@@ -1,6 +1,6 @@
 # ISSUE-0018: `scratch` symlink is rejected only in `setup-fixtures.zsh`; sweeps check only `-d`
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Low
 - **Category:** containment
 - **Affected:** `setup-fixtures.zsh:16` (guard) vs `run-safe.zsh:26-29` and `run-env.zsh:24-27` (missing guard)
@@ -87,3 +87,14 @@ Better: centralize it in `qa_common.py` (e.g. `verify_scratch(work)`) and call i
 
 - Self-test (or shell check): create a `/tmp` work-like directory containing a `scratch` symlink to a sentinel directory; invoke the guard helper and assert it exits nonzero; then invoke it with a real directory and assert success. Add the check to `tests/test_gate.py` and its identity to `coverage.json` if it exercises harness code.
 - Manual: after the fix, run `./run-all.zsh safe env` in the normal flow and confirm the fatal path is never taken.
+
+## Fix (2026-09-12, batch 5)
+
+- **Status change:** Open → Fixed.
+- run-safe.zsh and run-env.zsh now reject a missing **or symlinked** scratch
+  before any case runs (`[[ ! -d $scratch || -L $scratch ]]` → fatal, exit 2),
+  closing the window where only `setup-fixtures.zsh` checked. The fixture
+  stage recreates a real directory, and `verify_work` independently rejects
+  symlinked work paths, so no legitimate layout is refused.
+- Verified: review approved; full gate `20260912-215025-6c8985a5` = `YES`,
+  exit 0.

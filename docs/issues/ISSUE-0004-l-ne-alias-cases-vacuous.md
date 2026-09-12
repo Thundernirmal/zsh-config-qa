@@ -1,6 +1,6 @@
 # ISSUE-0004: `L` and `NE` alias cases pass with no aliases defined (vacuous assertions)
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** evidence-integrity
 - **Affected:** `run-safe.zsh:159-160`; target aliases `70-globals.zsh:14,18`
@@ -80,3 +80,21 @@ The `NE` form places `2>"$HOME/ne.err"` *before* `NE` so the alias expansion (`2
 - Fault-injection: run the same bodies with `ZSH_GLOBAL_ALIASES` unset (or with the alias definitions skipped) and assert they fail; the current versions pass under both conditions.
 - Keep the `G/W/H/T/NUL` cases as-is (their content comparisons do differ and are covered), but consider asserting `$galiases` for each so all five report real alias wiring.
 - Re-run `./run-all.zsh safe` and confirm the Meta block still reports 5 passing cases.
+
+## Fix (2026-09-12, batch 5)
+
+- **Status change:** Open → Fixed.
+- run-safe.zsh now asserts, under `ZSH_GLOBAL_ALIASES=1`:
+  - `L alias`: the global alias is defined (`${galiases[L]}` non-empty) and the
+    piped line count is 3 (`print -l {1..3} L | wc -l` — without the alias the
+    literal `L` line makes it 4);
+  - `NE alias`: the alias is defined and `$( print -r -- x NE ) == x` —
+    without the alias the unexpanded word becomes an argument and stdout is
+    `x NE`.
+  Both checks were verified to fail when the aliases are absent and pass with
+  them (mutation-checked); `${galiases[NAME]}` is the zsh special assoc for
+  global aliases and resolves in the case child.
+- An interim broken form (`${(galiases)NAME}`) broke one local gate run and
+  was caught and fixed before the batch landed; the final committed sweep uses
+  the correct form everywhere (confirmed by review, all occurrences).
+- Verified: full gate `20260912-215025-6c8985a5` = `YES`, exit 0, safe 63/63.

@@ -1,6 +1,6 @@
 # ISSUE-0003: `glyphs ascii tier` env case cannot fail because the output annotation echoes the requested tier
 
-- **Status:** Open
+- **Status:** Fixed
 - **Severity:** Medium
 - **Category:** evidence-integrity
 - **Affected:** `run-env.zsh:46`; target `functions/ztheme:125`
@@ -102,3 +102,18 @@ check 'glyphs ascii tier' 'ztheme current > "$HOME/ztheme.out" && command grep -
 - Fault-injection: run the case code in a child shell where `_zsh_theme_resolve_glyph_tier` is stubbed to `REPLY=nerd` (as in the reproduction) and assert the case fails; the current form passes, proving the fix.
 - Add the mutation as a harness self-test (or a documented manual check) so a future regression in the annotation format does not reopen the same hole.
 - Re-run `./run-all.zsh env` (fixtures auto-added; expect exit 2 `INCOMPLETE` for the focused run, case `glyphs ascii tier` pass).
+
+## Fix (2026-09-12, batch 5)
+
+- **Status change:** Open → Fixed.
+- run-env.zsh glyph cases now capture `ztheme current` into a per-case file
+  under the isolated HOME and assert the **resolved** field
+  (`command grep -q "^glyphs: ascii"`) for the `ZSH_UI_GLYPHS=ascii` and
+  `LC_ALL=C` auto cases, and `^glyphs: unicode` for `NO_NERD_FONT`. The
+  `(requested: ...)` annotation can no longer satisfy the match, so a target
+  regression that ignores the explicit tier now fails the case. The grep runs
+  against a file, not a pipeline (AGENTS.md hazard avoided). Case names
+  unchanged, so `coverage.json` needed no edit.
+- Verified: review approved with the mutation argument (resolved
+  `unicode (requested: ascii)` passes the old check and fails the new one);
+  full gate `20260912-215025-6c8985a5` = `YES`, exit 0.
